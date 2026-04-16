@@ -1,6 +1,8 @@
 package interview.guide.modules.interview.service;
 
 import interview.guide.common.ai.LlmProviderRegistry;
+import interview.guide.common.ai.PromptSanitizer;
+import interview.guide.common.ai.PromptSecurityConstants;
 import interview.guide.common.ai.StructuredOutputInvoker;
 import interview.guide.common.constant.CommonConstants.InterviewDefaults;
 import interview.guide.common.exception.BusinessException;
@@ -77,6 +79,7 @@ public class InterviewQuestionService {
     private final StructuredOutputInvoker structuredOutputInvoker;
     private final InterviewSkillService skillService;
     private final LlmProviderRegistry llmProviderRegistry;
+    private final PromptSanitizer promptSanitizer;
     private final ExecutorService questionExecutor;
     private final int followUpCount;
 
@@ -90,10 +93,12 @@ public class InterviewQuestionService {
             InterviewSkillService skillService,
             InterviewQuestionProperties properties,
             ResourceLoader resourceLoader,
-            LlmProviderRegistry llmProviderRegistry) throws IOException {
+            LlmProviderRegistry llmProviderRegistry,
+            PromptSanitizer promptSanitizer) throws IOException {
         this.structuredOutputInvoker = structuredOutputInvoker;
         this.skillService = skillService;
         this.llmProviderRegistry = llmProviderRegistry;
+        this.promptSanitizer = promptSanitizer;
         this.questionExecutor = Executors.newVirtualThreadPerTaskExecutor();
         this.skillSystemPromptTemplate = loadTemplate(resourceLoader, properties.getQuestionSystemPromptPath());
         this.skillUserPromptTemplate = loadTemplate(resourceLoader, properties.getQuestionUserPromptPath());
@@ -417,7 +422,9 @@ public class InterviewQuestionService {
         if (sourceJd == null || sourceJd.isBlank()) {
             return "";
         }
-        return "## 职位描述（JD）\n根据以下 JD 关键要求出题，确保题目与岗位实际需求相关：\n" + sourceJd;
+        return PromptSecurityConstants.DATA_BOUNDARY_INSTRUCTION + "\n" +
+            "## 职位描述（JD）\n根据以下 JD 关键要求出题，确保题目与岗位实际需求相关：\n" +
+            promptSanitizer.wrapWithDelimiters("jd", promptSanitizer.sanitize(sourceJd));
     }
 
     private List<String> sanitizeFollowUps(List<String> followUps) {

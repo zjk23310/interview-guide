@@ -1,11 +1,19 @@
 package interview.guide.modules.voiceinterview.service;
 
+import interview.guide.common.ai.PromptSanitizer;
+import interview.guide.common.ai.PromptSecurityConstants;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 @Service
 @Slf4j
 public class VoiceInterviewPromptService {
+
+    private final PromptSanitizer promptSanitizer;
+
+    public VoiceInterviewPromptService(PromptSanitizer promptSanitizer) {
+        this.promptSanitizer = promptSanitizer;
+    }
 
     private static final String VOICE_RESPONSE_CONSTRAINTS = """
             【语音面试输出约束】
@@ -33,11 +41,14 @@ public class VoiceInterviewPromptService {
         prompt.append("\n\n").append(VOICE_RESPONSE_CONSTRAINTS);
 
         if (resumeText != null && !resumeText.isEmpty()) {
+            String safeResume = promptSanitizer.sanitize(resumeText);
             prompt.append("\n\n【实时语音面试 - 候选人简历内容】\n")
                 .append("你已查阅过候选人简历。首轮仅用一句话说明已查阅，并立即进入首个问题。\n\n")
                 .append("【简历解析文本】\n")
-                .append(resumeText);
+                .append(promptSanitizer.wrapWithDelimiters("resume", safeResume));
         }
+
+        prompt.append(PromptSecurityConstants.ANTI_INJECTION_INSTRUCTION);
         return prompt.toString();
     }
 }

@@ -7,6 +7,7 @@ import io.micrometer.observation.ObservationRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
+import org.springframework.ai.chat.client.advisor.SafeGuardAdvisor;
 import org.springframework.ai.chat.client.advisor.SimpleLoggerAdvisor;
 import org.springframework.ai.chat.client.advisor.ToolCallAdvisor;
 import org.springframework.ai.chat.client.advisor.api.Advisor;
@@ -26,6 +27,7 @@ import org.springframework.web.client.RestClient;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -123,8 +125,10 @@ public class LlmProviderRegistry {
 
     private ChatClient createPlainChatClient(String providerId) {
         OpenAiChatModel chatModel = buildChatModel(providerId);
+        ChatClient.Builder builder = ChatClient.builder(chatModel);
+        buildSafeGuardAdvisor().ifPresent(advisor -> builder.defaultAdvisors(advisor));
         log.info("[LlmProviderRegistry] Created plain ChatClient (no tools) for {}", providerId);
-        return ChatClient.builder(chatModel).build();
+        return builder.build();
     }
 
     private ChatClient createVoiceChatClient(String providerId) {
@@ -134,8 +138,13 @@ public class LlmProviderRegistry {
         if (interviewSkillsToolCallback != null) {
             builder.defaultToolCallbacks(interviewSkillsToolCallback);
         }
+        List<Advisor> advisors = new ArrayList<>();
         if (toolCallingManager != null) {
-            builder.defaultAdvisors(buildToolCallAdvisor(true, true));
+            advisors.add(buildToolCallAdvisor(true, true));
+        }
+        buildSafeGuardAdvisor().ifPresent(advisors::add);
+        if (!advisors.isEmpty()) {
+            builder.defaultAdvisors(advisors.toArray(new Advisor[0]));
         }
         log.info("[LlmProviderRegistry] Created voice ChatClient (SkillsTool + streaming ToolCall) for {}", providerId);
         return builder.build();
@@ -210,6 +219,8 @@ public class LlmProviderRegistry {
             advisors.add(new SimpleLoggerAdvisor());
         }
 
+        buildSafeGuardAdvisor().ifPresent(advisors::add);
+
         return advisors;
     }
 
@@ -220,6 +231,19 @@ public class LlmProviderRegistry {
             .conversationHistoryEnabled(conversationHistoryEnabled)
             .streamToolCallResponses(streamToolCallResponses)
             .build();
+    }
+
+    private Optional<SafeGuardAdvisor> buildSafeGuardAdvisor() {
+        AdvisorConfig config = properties.getAdvisors();
+        if (config == null || !config.isSafeguardEnabled()) {
+            return Optional.empty();
+        }
+        SafeGuardAdvisor advisor = SafeGuardAdvisor.builder()
+            .sensitiveWords(config.getSafeguardWords())
+            .failureResponse("抱歉，我只能协助面试相关的任务。")
+            .order(100)
+            .build();
+        return Optional.of(advisor);
     }
 
     private String resolveProviderId(String providerId) {

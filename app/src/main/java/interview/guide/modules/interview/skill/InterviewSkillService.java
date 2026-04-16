@@ -1,6 +1,8 @@
 package interview.guide.modules.interview.skill;
 
 import interview.guide.common.ai.LlmProviderRegistry;
+import interview.guide.common.ai.PromptSanitizer;
+import interview.guide.common.ai.PromptSecurityConstants;
 import interview.guide.common.ai.StructuredOutputInvoker;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
@@ -42,6 +44,8 @@ public class InterviewSkillService {
     public static final String CUSTOM_SKILL_ID = "custom";
 
     private static final int MIN_JD_LENGTH = 50;
+    private static final int MAX_CATEGORY_LABEL_LENGTH = 50;
+    private static final int MAX_CATEGORY_KEY_LENGTH = 50;
 
     private static final Pattern FRONT_MATTER_PATTERN = Pattern.compile("(?s)^---\\s*\\n(.*?)\\n---\\s*\\n?(.*)$");
     private static final Pattern SKILL_ID_PATTERN = Pattern.compile(".*/skills/([^/]+)/SKILL\\.md$");
@@ -57,6 +61,7 @@ public class InterviewSkillService {
     private final BeanOutputConverter<CategoryListDTO> jdOutputConverter;
     private final PromptTemplate jdSystemPromptTemplate;
     private final ResourceLoader resourceLoader;
+    private final PromptSanitizer promptSanitizer;
 
     /** 预设 Skill 注册表，启动时从 classpath:skills/{skillId}/SKILL.md 加载 */
     private final Map<String, InterviewSkillProperties.SkillDefinition> presetRegistry = new TreeMap<>();
@@ -74,10 +79,12 @@ public class InterviewSkillService {
 
     public InterviewSkillService(LlmProviderRegistry llmProviderRegistry,
                                  StructuredOutputInvoker structuredOutputInvoker,
-                                 ResourceLoader resourceLoader) throws IOException {
+                                 ResourceLoader resourceLoader,
+                                 PromptSanitizer promptSanitizer) throws IOException {
         this.llmProviderRegistry = llmProviderRegistry;
         this.structuredOutputInvoker = structuredOutputInvoker;
         this.resourceLoader = resourceLoader;
+        this.promptSanitizer = promptSanitizer;
         this.jdOutputConverter = new BeanOutputConverter<>(CategoryListDTO.class) {};
         this.jdSystemPromptTemplate = new PromptTemplate(loadClasspathPrompt(JD_PARSE_SYSTEM_PROMPT_PATH));
     }
@@ -145,18 +152,21 @@ public class InterviewSkillService {
      */
     public SkillDTO buildCustomSkill(List<CategoryDTO> customCategories, String jdText) {
         List<SkillCategoryDTO> categories = customCategories.stream()
+            .filter(cat -> cat.key() != null && cat.label() != null)
             .map(cat -> {
-                RefMapping refMapping = categoryRefIndex.get(cat.key());
+                String safeKey = sanitizeCategoryKey(cat.key());
+                String safeLabel = sanitizeCategoryLabel(cat.label());
+                RefMapping refMapping = categoryRefIndex.get(safeKey);
                 if (refMapping != null) {
                     if (!refMapping.ref().equals(cat.ref())
                         || refMapping.shared() != Boolean.TRUE.equals(cat.shared())) {
                         log.info("JD 分类 reference 已按本地映射纠正: key={}, modelRef={}, modelShared={}, mappedRef={}, mappedShared={}",
-                            cat.key(), cat.ref(), cat.shared(), refMapping.ref(), refMapping.shared());
+                            safeKey, cat.ref(), cat.shared(), refMapping.ref(), refMapping.shared());
                     }
-                    return new SkillCategoryDTO(cat.key(), cat.label(), cat.priority(),
+                    return new SkillCategoryDTO(safeKey, safeLabel, cat.priority(),
                         refMapping.ref(), refMapping.shared());
                 }
-                return new SkillCategoryDTO(cat.key(), cat.label(), cat.priority(),
+                return new SkillCategoryDTO(safeKey, safeLabel, cat.priority(),
                     cat.ref(), Boolean.TRUE.equals(cat.shared()));
             })
             .toList();
@@ -180,7 +190,9 @@ public class InterviewSkillService {
         String systemPrompt = jdSystemPromptTemplate.render(Map.of(
             "referenceFileList", cachedReferenceFileList
         )) + "\n\n" + jdOutputConverter.getFormat();
-        String userPrompt = "职位描述：\n" + jdText;
+        String userPrompt = PromptSecurityConstants.DATA_BOUNDARY_INSTRUCTION + "\n" +
+            "职位描述：\n" +
+            promptSanitizer.wrapWithDelimiters("jd", promptSanitizer.sanitize(jdText));
 
         try {
             CategoryListDTO result = structuredOutputInvoker.invoke(
@@ -541,6 +553,43 @@ public class InterviewSkillService {
             && !referenceFile.startsWith("/")
             && !referenceFile.startsWith("\\")
             && referenceFile.matches("[a-zA-Z0-9._/-]+");
+    }
+
+    /**
+     * 清洗 category key：截断长度，非法字符替换为下划线，转大写。
+     * 首字符必须为字母，否则添加 "CAT_" 前缀。
+     */
+    private String sanitizeCategoryKey(String key) {
+        if (key == null || key.isBlank()) {
+            return "UNKNOWN";
+        }
+        String trimmed = key.trim();
+        if (trimmed.length() > MAX_CATEGORY_KEY_LENGTH) {
+            trimmed = trimmed.substring(0, MAX_CATEGORY_KEY_LENGTH);
+        }
+        String upper = trimmed.toUpperCase().replaceAll("[^A-Z0-9_]", "_");
+        if (upper.isEmpty()) {
+            return "UNKNOWN";
+        }
+        // 确保首字符为字母（匹配 category key 命名规范）
+        if (!Character.isLetter(upper.charAt(0))) {
+            upper = "CAT_" + upper;
+        }
+        return upper;
+    }
+
+    /**
+     * 清洗 category label：截断长度，移除换行。
+     */
+    private String sanitizeCategoryLabel(String label) {
+        if (label == null || label.isBlank()) {
+            return "未命名";
+        }
+        String trimmed = label.trim().replaceAll("[\\r\\n]+", " ");
+        if (trimmed.length() > MAX_CATEGORY_LABEL_LENGTH) {
+            trimmed = trimmed.substring(0, MAX_CATEGORY_LABEL_LENGTH);
+        }
+        return trimmed;
     }
 
     private SkillDTO toSkillDTO(String id, InterviewSkillProperties.SkillDefinition def) {

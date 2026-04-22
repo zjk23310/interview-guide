@@ -197,7 +197,7 @@ public class RedisService {
             throw new BusinessException(ErrorCode.INTERNAL_ERROR, "获取锁失败: " + lockKey);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new BusinessException("获取锁被中断: " + lockKey, e);
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "获取锁被中断: " + lockKey, e);
         }
     }
 
@@ -275,9 +275,12 @@ public class RedisService {
             log.info("创建 Stream 消费者组: stream={}, group={}", streamKey, groupName);
         } catch (Exception e) {
             // 组已存在，忽略
-            if (!e.getMessage().contains("BUSYGROUP")) {
-                log.warn("创建消费者组失败: {}", e.getMessage());
+            if (e instanceof org.redisson.client.RedisException
+                    && e.getMessage() != null
+                    && e.getMessage().contains("BUSYGROUP")) {
+                return;
             }
+            log.warn("创建消费者组失败: stream={}, group={}, error={}", streamKey, groupName, e.getMessage());
         }
     }
 

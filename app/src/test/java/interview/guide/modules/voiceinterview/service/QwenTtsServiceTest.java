@@ -1,9 +1,9 @@
 package interview.guide.modules.voiceinterview.service;
 
+import interview.guide.modules.voiceinterview.config.VoiceInterviewProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.DisplayName;
-import org.springframework.test.util.ReflectionTestUtils;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -14,19 +14,19 @@ class QwenTtsServiceTest {
 
     @BeforeEach
     void setUp() {
-        ttsService = new QwenTtsService();
+        VoiceInterviewProperties properties = new VoiceInterviewProperties();
+        VoiceInterviewProperties.QwenTtsConfig tts = properties.getQwen().getTts();
+        tts.setModel("qwen3-tts-flash-realtime");
+        tts.setApiKey("test-api-key");
+        tts.setVoice("Cherry");
+        tts.setFormat("pcm");
+        tts.setSampleRate(16000);
+        tts.setMode("server_commit");
+        tts.setLanguageType("Chinese");
+        tts.setSpeechRate(1.0f);
+        tts.setVolume(60);
 
-        // Set field values using reflection
-        ReflectionTestUtils.setField(ttsService, "url", "wss://dashscope.aliyuncs.com/api-ws/v1/realtime");
-        ReflectionTestUtils.setField(ttsService, "model", "qwen3-tts-flash-realtime");
-        ReflectionTestUtils.setField(ttsService, "apiKey", "test-api-key");
-        ReflectionTestUtils.setField(ttsService, "voice", "Cherry");
-        ReflectionTestUtils.setField(ttsService, "format", "pcm");
-        ReflectionTestUtils.setField(ttsService, "sampleRate", 16000);
-        ReflectionTestUtils.setField(ttsService, "mode", "server_commit");
-        ReflectionTestUtils.setField(ttsService, "languageType", "Chinese");
-        ReflectionTestUtils.setField(ttsService, "speechRate", 1.0f);
-        ReflectionTestUtils.setField(ttsService, "volume", 60);
+        ttsService = new QwenTtsService(properties);
     }
 
     @Test
@@ -75,5 +75,39 @@ class QwenTtsServiceTest {
 
         // Destroy should cleanup resources without error
         assertDoesNotThrow(() -> ttsService.destroy());
+    }
+
+    @Test
+    @DisplayName("reload 应更新所有 TTS 配置字段")
+    void testReloadUpdatesAllFields() throws Exception {
+        VoiceInterviewProperties newProps = new VoiceInterviewProperties();
+        VoiceInterviewProperties.QwenTtsConfig newTts = newProps.getQwen().getTts();
+        newTts.setModel("new-tts-model");
+        newTts.setApiKey("new-api-key");
+        newTts.setVoice("Serena");
+        newTts.setFormat("mp3");
+        newTts.setSampleRate(48000);
+        newTts.setMode("user_commit");
+        newTts.setLanguageType("English");
+        newTts.setSpeechRate(1.5f);
+        newTts.setVolume(80);
+
+        ttsService.reload(newProps);
+
+        assertEquals("new-tts-model", field(ttsService, "model"));
+        assertEquals("new-api-key", field(ttsService, "apiKey"));
+        assertEquals("Serena", field(ttsService, "voice"));
+        assertEquals("mp3", field(ttsService, "format"));
+        assertEquals(48000, field(ttsService, "sampleRate"));
+        assertEquals("user_commit", field(ttsService, "mode"));
+        assertEquals("English", field(ttsService, "languageType"));
+        assertEquals(1.5f, field(ttsService, "speechRate"));
+        assertEquals(80, field(ttsService, "volume"));
+    }
+
+    private static Object field(Object obj, String name) throws Exception {
+        java.lang.reflect.Field f = obj.getClass().getDeclaredField(name);
+        f.setAccessible(true);
+        return f.get(obj);
     }
 }

@@ -73,19 +73,8 @@ spring:
           subscriptionConnectionMinimumIdleSize: 1
           subscriptionConnectionPoolSize: 50
   
-  # Spring AI - 阿里云DashScope (OpenAI兼容模式)
+  # Spring AI 配置（chat + embedding 统一由 app.ai.providers 驱动，不使用自动配置）
   ai:
-    openai:
-      base-url: https://dashscope.aliyuncs.com/compatible-mode
-      api-key: ${AI_BAILIAN_API_KEY}
-      chat:
-        options:
-          model: ${AI_MODEL:qwen-plus}
-          temperature: 0.2
-      # Embedding模型配置 - 使用text-embedding-v3
-      embedding:
-        options:
-          model: text-embedding-v3
     # 禁用自动重试机制，让异常立即返回
     retry:
       max-attempts: 1  # 不重试，失败立即返回
@@ -103,17 +92,35 @@ spring:
 app:
   ai:
     default-provider: dashscope
+    # 运行时可写的 Provider 配置落点（与 classpath 主 application.yml 隔离）。
+    # 开发环境默认写到用户主目录下，避免污染源码目录或 jar 内 classpath 资源。
+    config-yaml-path: ${APP_AI_CONFIG_YAML_PATH:${user.home}/.interview-guide/llm-providers.yml}
+    config-env-path: ${APP_AI_CONFIG_ENV_PATH:${user.home}/.interview-guide/llm-providers.env}
     agent-utils:
       skills-root: ${APP_AI_AGENT_UTILS_SKILLS_ROOT:classpath:skills}
     providers:
       dashscope:
-        base-url: https://dashscope.aliyuncs.com/compatible-mode
+        base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
         api-key: ${AI_BAILIAN_API_KEY}
-        model: qwen-plus
+        model: ${AI_MODEL:qwen3.5-flash}
+        embedding-model: text-embedding-v3
       lmstudio:
         base-url: http://localhost:1234
-        api-key: lm-studio
+        api-key: ${PROVIDER_LMSTUDIO_API_KEY:lm-studio}
         model: qwen2.5-7b-instruct
+      # ===== 预设 Provider（填完 API Key 后即可使用）=====
+      # Moonshot AI / Kimi（OpenAI 兼容） https://platform.moonshot.cn/
+      kimi:
+        base-url: https://api.moonshot.cn/v1
+        api-key: ${PROVIDER_KIMI_API_KEY:}
+        model: ${PROVIDER_KIMI_MODEL:kimi-latest}
+        temperature: 1
+      # 智谱 AI / GLM（OpenAI 兼容） https://open.bigmodel.cn/
+      glm:
+        base-url: https://open.bigmodel.cn/api/coding/paas/v4
+        api-key: ${PROVIDER_GLM_API_KEY:}
+        model: ${PROVIDER_GLM_MODEL:glm-4-flash}
+        embedding-model: embedding-3
     advisors:
       enabled: ${APP_AI_ADVISORS_ENABLED:true}
       tool-call-enabled: ${APP_AI_ADVISORS_TOOL_CALL_ENABLED:true}
@@ -170,9 +177,6 @@ app:
 
   # Voice interview configuration
   voice-interview:
-    # LLM provider selection
-    llm-provider: ${APP_VOICE_INTERVIEW_LLM_PROVIDER:dashscope}  # dashscope | minimax | openai | deepseek
-
     # Phase duration settings (minutes)
     phase:
       intro:

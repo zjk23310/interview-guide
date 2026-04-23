@@ -1,5 +1,6 @@
 package interview.guide.modules.voiceinterview.service;
 
+import interview.guide.common.ai.LlmProviderRegistry;
 import interview.guide.common.constant.CommonConstants.InterviewDefaults;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
@@ -50,6 +51,7 @@ public class VoiceInterviewService {
     private final RedissonClient redissonClient;
     private final VoiceInterviewProperties properties;
     private final VoiceEvaluateStreamProducer voiceEvaluateStreamProducer;
+    private final LlmProviderRegistry llmProviderRegistry;
 
     private static final String SESSION_CACHE_KEY_PREFIX = "voice:interview:session:";
     private static final int CACHE_TTL_HOURS = 1;
@@ -67,7 +69,7 @@ public class VoiceInterviewService {
         String effectiveSkillId = request.getSkillId() != null ? request.getSkillId() : InterviewDefaults.SKILL_ID;
         String effectiveLlmProvider = (request.getLlmProvider() != null && !request.getLlmProvider().isBlank())
             ? request.getLlmProvider()
-            : properties.getLlmProvider();
+            : null;
 
         VoiceInterviewSessionEntity session = VoiceInterviewSessionEntity.builder()
                 .userId(DEFAULT_USER_ID)

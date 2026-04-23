@@ -1,5 +1,6 @@
 package interview.guide.modules.resume.service;
 
+import interview.guide.common.ai.LlmProviderRegistry;
 import interview.guide.common.ai.StructuredOutputInvoker;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
@@ -29,7 +30,7 @@ public class ResumeGradingService {
     
     private static final Logger log = LoggerFactory.getLogger(ResumeGradingService.class);
     
-    private final ChatClient chatClient;
+    private final LlmProviderRegistry llmProviderRegistry;
     private final PromptTemplate systemPromptTemplate;
     private final PromptTemplate userPromptTemplate;
     private final BeanOutputConverter<ResumeAnalysisResponseDTO> outputConverter;
@@ -60,11 +61,11 @@ public class ResumeGradingService {
     ) {}
     
     public ResumeGradingService(
-            ChatClient.Builder chatClientBuilder,
+            LlmProviderRegistry llmProviderRegistry,
             StructuredOutputInvoker structuredOutputInvoker,
             ResumeAnalysisProperties properties,
             ResourceLoader resourceLoader) throws IOException {
-        this.chatClient = chatClientBuilder.build();
+        this.llmProviderRegistry = llmProviderRegistry;
         this.structuredOutputInvoker = structuredOutputInvoker;
         this.systemPromptTemplate = new PromptTemplate(
             resourceLoader.getResource(properties.getSystemPromptPath())
@@ -101,6 +102,7 @@ public class ResumeGradingService {
             // 调用AI
             ResumeAnalysisResponseDTO dto;
             try {
+                ChatClient chatClient = llmProviderRegistry.getDefaultChatClient();
                 dto = structuredOutputInvoker.invoke(
                     chatClient,
                     systemPromptWithFormat,

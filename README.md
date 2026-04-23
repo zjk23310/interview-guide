@@ -331,13 +331,8 @@ cp .env.example .env
 # 2. 编辑 .env 文件，填入 AI 配置
 # vim .env
 # 必填：AI_BAILIAN_API_KEY=your_key_here
-# 可选：AI_MODEL=qwen-plus        # 默认值为 qwen-plus
+# 可选：AI_MODEL=qwen3.5-flash   # 默认值为 qwen3.5-flash
 #        # 也可以改为 qwen-max、qwen-long 等其他可用模型
-#
-# 多 LLM 提供商支持（可选）：
-# APP_VOICE_INTERVIEW_LLM_PROVIDER=dashscope  # 默认使用 DashScope
-#        # 也支持：minimax, openai, deepseek, lmstudio
-#        # 如需使用其他提供商，请参考 .env.example 中的配置说明
 #
 # 面试参数配置（可选）：
 # APP_INTERVIEW_FOLLOW_UP_COUNT=1         # 每个主问题生成追问数量（默认 1）

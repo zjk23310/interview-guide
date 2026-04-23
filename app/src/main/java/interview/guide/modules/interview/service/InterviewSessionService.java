@@ -462,7 +462,7 @@ public class InterviewSessionService {
         List<InterviewQuestionDTO> questions = session.getQuestions(objectMapper);
 
         // 获取 LLM 客户端
-        String provider = InterviewDefaults.LLM_PROVIDER;
+        String provider = null;
         Optional<InterviewSessionEntity> entityOpt = persistenceService.findBySessionId(sessionId);
         if (entityOpt.isPresent()) {
             provider = entityOpt.get().getLlmProvider();

@@ -38,7 +38,6 @@ public final class CommonConstants {
     public static final class InterviewDefaults {
         public static final String SKILL_ID = "java-backend";
         public static final String DIFFICULTY = "mid";
-        public static final String LLM_PROVIDER = "dashscope";
 
         private InterviewDefaults() {}
     }

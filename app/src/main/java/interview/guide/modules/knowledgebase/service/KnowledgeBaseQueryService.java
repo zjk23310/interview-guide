@@ -1,5 +1,6 @@
 package interview.guide.modules.knowledgebase.service;
 
+import interview.guide.common.ai.LlmProviderRegistry;
 import interview.guide.common.ai.PromptSecurityConstants;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
@@ -39,7 +40,7 @@ public class KnowledgeBaseQueryService {
     private static final int STREAM_PROBE_CHARS = 120;
     private static final int MAX_REWRITE_HISTORY_CHAR = 200;
 
-    private final ChatClient chatClient;
+    private final LlmProviderRegistry llmProviderRegistry;
     private final KnowledgeBaseVectorService vectorService;
     private final KnowledgeBaseListService listService;
     private final KnowledgeBaseCountService countService;
@@ -55,13 +56,13 @@ public class KnowledgeBaseQueryService {
     private final double minScoreDefault;
 
     public KnowledgeBaseQueryService(
-            ChatClient.Builder chatClientBuilder,
+            LlmProviderRegistry llmProviderRegistry,
             KnowledgeBaseVectorService vectorService,
             KnowledgeBaseListService listService,
             KnowledgeBaseCountService countService,
             KnowledgeBaseQueryProperties queryProperties,
             ResourceLoader resourceLoader) throws IOException {
-        this.chatClient = chatClientBuilder.build();
+        this.llmProviderRegistry = llmProviderRegistry;
         this.vectorService = vectorService;
         this.listService = listService;
         this.countService = countService;
@@ -84,6 +85,10 @@ public class KnowledgeBaseQueryService {
         this.topkLong = queryProperties.getSearch().getTopkLong();
         this.minScoreShort = queryProperties.getSearch().getMinScoreShort();
         this.minScoreDefault = queryProperties.getSearch().getMinScoreDefault();
+    }
+
+    private ChatClient getChatClient() {
+        return llmProviderRegistry.getDefaultChatClient();
     }
 
     /**
@@ -127,7 +132,7 @@ public class KnowledgeBaseQueryService {
         String userPrompt = buildUserPrompt(context, question);
 
         try {
-            String answer = chatClient.prompt()
+            String answer = getChatClient().prompt()
                     .system(systemPrompt)
                     .user(userPrompt)
                     .call()
@@ -228,7 +233,7 @@ public class KnowledgeBaseQueryService {
             String userPrompt = buildUserPrompt(context, question);
 
             // 5. 流式调用（带历史上下文）+ 探测窗口归一化
-            var promptSpec = chatClient.prompt().system(systemPrompt);
+            var promptSpec = getChatClient().prompt().system(systemPrompt);
             if (!effectiveHistory.isEmpty()) {
                 promptSpec = promptSpec.messages(effectiveHistory);
             }
@@ -315,7 +320,7 @@ public class KnowledgeBaseQueryService {
             variables.put("question", question);
             variables.put("history", formatHistoryForRewrite(history));
             String rewritePrompt = rewritePromptTemplate.render(variables);
-            String rewritten = chatClient.prompt()
+            String rewritten = getChatClient().prompt()
                 .user(rewritePrompt)
                 .call()
                 .content();

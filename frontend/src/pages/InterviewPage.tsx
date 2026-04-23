@@ -51,7 +51,7 @@ export default function Interview({
   const startedRef = useRef(false);
 
   const questionCount = initialConfig?.questionCount ?? 8;
-  const llmProvider = initialConfig?.llmProvider ?? 'dashscope';
+  const llmProvider = initialConfig?.llmProvider ?? '';
   const skillId = initialConfig?.skillId ?? 'java-backend';
   const difficulty = initialConfig?.difficulty ?? 'mid';
   const customCategories = initialConfig?.customCategories;

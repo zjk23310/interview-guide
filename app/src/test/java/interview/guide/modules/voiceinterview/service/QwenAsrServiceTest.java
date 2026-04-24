@@ -2,10 +2,10 @@ package interview.guide.modules.voiceinterview.service;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import interview.guide.modules.voiceinterview.config.VoiceInterviewProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.DisplayName;
-import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.CountDownLatch;
@@ -20,19 +20,20 @@ class QwenAsrServiceTest {
 
     @BeforeEach
     void setUp() {
-        asrService = new QwenAsrService();
+        VoiceInterviewProperties properties = new VoiceInterviewProperties();
+        VoiceInterviewProperties.AsrConfig asr = properties.getQwen().getAsr();
+        asr.setUrl("wss://dashscope.aliyuncs.com/api-ws/v1/realtime");
+        asr.setModel("qwen3-asr-flash-realtime");
+        asr.setApiKey("test-api-key");
+        asr.setLanguage("zh");
+        asr.setFormat("pcm");
+        asr.setSampleRate(16000);
+        asr.setEnableTurnDetection(true);
+        asr.setTurnDetectionType("server_vad");
+        asr.setTurnDetectionThreshold(0.0f);
+        asr.setTurnDetectionSilenceDurationMs(400);
 
-        // Set field values using reflection
-        ReflectionTestUtils.setField(asrService, "url", "wss://dashscope.aliyuncs.com/api-ws/v1/realtime");
-        ReflectionTestUtils.setField(asrService, "model", "qwen3-asr-flash-realtime");
-        ReflectionTestUtils.setField(asrService, "apiKey", "test-api-key");
-        ReflectionTestUtils.setField(asrService, "language", "zh");
-        ReflectionTestUtils.setField(asrService, "format", "pcm");
-        ReflectionTestUtils.setField(asrService, "sampleRate", 16000);
-        ReflectionTestUtils.setField(asrService, "enableTurnDetection", true);
-        ReflectionTestUtils.setField(asrService, "turnDetectionType", "server_vad");
-        ReflectionTestUtils.setField(asrService, "turnDetectionThreshold", 0.0f);
-        ReflectionTestUtils.setField(asrService, "turnDetectionSilenceDurationMs", 400);
+        asrService = new QwenAsrService(properties);
     }
 
     @Test

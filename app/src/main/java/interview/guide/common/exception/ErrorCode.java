@@ -67,8 +67,20 @@ public enum ErrorCode {
     // ========== 语音面试模块错误 10xxx ==========
     VOICE_SESSION_NOT_FOUND(10001, "语音面试会话不存在"),
     VOICE_EVALUATION_FAILED(10004, "语音面试评估失败"),
-    VOICE_EVALUATION_NOT_FOUND(10006, "语音面试评估结果不存在");
-    
+    VOICE_EVALUATION_NOT_FOUND(10006, "语音面试评估结果不存在"),
+
+    // ========== Provider管理模块错误 11xxx ==========
+    PROVIDER_NOT_FOUND(11001, "LLM Provider 不存在"),
+    PROVIDER_ALREADY_EXISTS(11002, "LLM Provider 已存在"),
+    PROVIDER_CONFIG_READ_FAILED(11004, "读取 Provider 配置失败"),
+    PROVIDER_CONFIG_WRITE_FAILED(11005, "写入 Provider 配置失败"),
+    PROVIDER_TEST_FAILED(11006, "Provider 连通性测试失败"),
+    PROVIDER_DEFAULT_CANNOT_DELETE(11007, "默认 Provider 不可删除"),
+    MODULE_NOT_FOUND(11008, "模块不存在"),
+    VOICE_CONFIG_READ_FAILED(11009, "读取语音服务配置失败"),
+    VOICE_CONFIG_WRITE_FAILED(11010, "写入语音服务配置失败"),
+    VOICE_CONFIG_TEST_FAILED(11011, "语音服务连通性测试失败");
+
     private final Integer code;
     private final String message;
 }

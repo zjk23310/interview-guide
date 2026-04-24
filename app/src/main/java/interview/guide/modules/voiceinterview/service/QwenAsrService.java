@@ -70,7 +70,15 @@ public class QwenAsrService {
     private Integer turnDetectionSilenceDurationMs;
 
     public QwenAsrService(VoiceInterviewProperties voiceInterviewProperties) {
-        VoiceInterviewProperties.AsrConfig asr = voiceInterviewProperties.getQwen().getAsr();
+        applyAsrConfig(voiceInterviewProperties.getQwen().getAsr());
+    }
+
+    public void reload(VoiceInterviewProperties voiceInterviewProperties) {
+        applyAsrConfig(voiceInterviewProperties.getQwen().getAsr());
+        log.info("QwenAsrService reloaded: model={}, url={}", model, url);
+    }
+
+    private void applyAsrConfig(VoiceInterviewProperties.AsrConfig asr) {
         this.url = asr.getUrl();
         this.model = asr.getModel();
         this.apiKey = asr.getApiKey();

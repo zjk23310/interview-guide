@@ -63,7 +63,15 @@ public class QwenTtsService {
     private Integer volume;
 
     public QwenTtsService(VoiceInterviewProperties voiceInterviewProperties) {
-        VoiceInterviewProperties.QwenTtsConfig tts = voiceInterviewProperties.getQwen().getTts();
+        applyTtsConfig(voiceInterviewProperties.getQwen().getTts());
+    }
+
+    public void reload(VoiceInterviewProperties voiceInterviewProperties) {
+        applyTtsConfig(voiceInterviewProperties.getQwen().getTts());
+        log.info("QwenTtsService reloaded: model={}, voice={}", model, voice);
+    }
+
+    private void applyTtsConfig(VoiceInterviewProperties.QwenTtsConfig tts) {
         this.model = tts.getModel();
         this.apiKey = tts.getApiKey();
         this.voice = tts.getVoice();

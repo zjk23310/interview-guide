@@ -14,12 +14,16 @@ public class LlmProviderProperties {
     private String defaultProvider = "dashscope";
     private Map<String, ProviderConfig> providers;
     private AdvisorConfig advisors = new AdvisorConfig();
+    private String configYamlPath;
+    private String configEnvPath;
 
     @Data
     public static class ProviderConfig {
         private String baseUrl;
         private String apiKey;
         private String model;
+        private String embeddingModel;
+        private Double temperature;
     }
 
     @Data

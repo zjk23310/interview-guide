@@ -107,6 +107,15 @@ public class LlmProviderRegistry {
         return clientCache.computeIfAbsent(id + ":voice", key -> createVoiceChatClient(id));
     }
 
+    /**
+     * 清空缓存，重新加载所有 provider。
+     */
+    public void reload() {
+        int size = clientCache.size();
+        clientCache.clear();
+        log.info("[LlmProviderRegistry] Cache cleared ({} entries). Next access will re-create clients.", size);
+    }
+
     private ChatClient createChatClient(String providerId) {
         OpenAiChatModel chatModel = buildChatModel(providerId);
 

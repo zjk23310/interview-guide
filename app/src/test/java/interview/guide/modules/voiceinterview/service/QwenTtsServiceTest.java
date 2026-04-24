@@ -76,4 +76,38 @@ class QwenTtsServiceTest {
         // Destroy should cleanup resources without error
         assertDoesNotThrow(() -> ttsService.destroy());
     }
+
+    @Test
+    @DisplayName("reload 应更新所有 TTS 配置字段")
+    void testReloadUpdatesAllFields() throws Exception {
+        VoiceInterviewProperties newProps = new VoiceInterviewProperties();
+        VoiceInterviewProperties.QwenTtsConfig newTts = newProps.getQwen().getTts();
+        newTts.setModel("new-tts-model");
+        newTts.setApiKey("new-api-key");
+        newTts.setVoice("Serena");
+        newTts.setFormat("mp3");
+        newTts.setSampleRate(48000);
+        newTts.setMode("user_commit");
+        newTts.setLanguageType("English");
+        newTts.setSpeechRate(1.5f);
+        newTts.setVolume(80);
+
+        ttsService.reload(newProps);
+
+        assertEquals("new-tts-model", field(ttsService, "model"));
+        assertEquals("new-api-key", field(ttsService, "apiKey"));
+        assertEquals("Serena", field(ttsService, "voice"));
+        assertEquals("mp3", field(ttsService, "format"));
+        assertEquals(48000, field(ttsService, "sampleRate"));
+        assertEquals("user_commit", field(ttsService, "mode"));
+        assertEquals("English", field(ttsService, "languageType"));
+        assertEquals(1.5f, field(ttsService, "speechRate"));
+        assertEquals(80, field(ttsService, "volume"));
+    }
+
+    private static Object field(Object obj, String name) throws Exception {
+        java.lang.reflect.Field f = obj.getClass().getDeclaredField(name);
+        f.setAccessible(true);
+        return f.get(obj);
+    }
 }

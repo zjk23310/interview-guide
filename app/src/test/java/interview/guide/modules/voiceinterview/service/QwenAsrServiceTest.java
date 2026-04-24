@@ -151,4 +151,40 @@ class QwenAsrServiceTest {
         assertFalse(asrService.hasActiveSession("session-1"));
         assertFalse(asrService.hasActiveSession("session-2"));
     }
+
+    @Test
+    @DisplayName("reload 应更新所有 ASR 配置字段")
+    void testReloadUpdatesAllFields() throws Exception {
+        VoiceInterviewProperties newProps = new VoiceInterviewProperties();
+        VoiceInterviewProperties.AsrConfig newAsr = newProps.getQwen().getAsr();
+        newAsr.setUrl("wss://new-host.example.com/ws");
+        newAsr.setModel("new-asr-model");
+        newAsr.setApiKey("new-api-key");
+        newAsr.setLanguage("en");
+        newAsr.setFormat("wav");
+        newAsr.setSampleRate(8000);
+        newAsr.setEnableTurnDetection(false);
+        newAsr.setTurnDetectionType("client_vad");
+        newAsr.setTurnDetectionThreshold(0.5f);
+        newAsr.setTurnDetectionSilenceDurationMs(200);
+
+        asrService.reload(newProps);
+
+        assertEquals("wss://new-host.example.com/ws", field(asrService, "url"));
+        assertEquals("new-asr-model", field(asrService, "model"));
+        assertEquals("new-api-key", field(asrService, "apiKey"));
+        assertEquals("en", field(asrService, "language"));
+        assertEquals("wav", field(asrService, "format"));
+        assertEquals(8000, field(asrService, "sampleRate"));
+        assertEquals(false, field(asrService, "enableTurnDetection"));
+        assertEquals("client_vad", field(asrService, "turnDetectionType"));
+        assertEquals(0.5f, field(asrService, "turnDetectionThreshold"));
+        assertEquals(200, field(asrService, "turnDetectionSilenceDurationMs"));
+    }
+
+    private static Object field(Object obj, String name) throws Exception {
+        java.lang.reflect.Field f = obj.getClass().getDeclaredField(name);
+        f.setAccessible(true);
+        return f.get(obj);
+    }
 }

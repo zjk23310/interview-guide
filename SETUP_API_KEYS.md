@@ -27,7 +27,7 @@ AI_BAILIAN_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxx
 
 **费用**:
 - 新用户有免费额度
-- LLM（qwen-plus 模型）: 约 ¥0.008/千 tokens
+- LLM（qwen3.5-flash 模型）: 请以阿里云最新价格页为准
 - ASR 语音识别: ¥2.4/小时（实际使用流式服务）
 - TTS 语音合成: ¥2/百万字符
 
@@ -48,7 +48,7 @@ cp .env.example .env
 AI_BAILIAN_API_KEY=sk-your-actual-key-here
 
 # 可选：选择不同的 LLM 模型
-AI_MODEL=qwen-plus  # 默认值，也可改为 qwen-max、qwen-long 等
+AI_MODEL=qwen3.5-flash  # 默认值，也可改为 qwen3.5-plus、qwen-max 等
 ```
 
 3. 启动应用时会自动读取 `.env` 文件
@@ -58,11 +58,11 @@ AI_MODEL=qwen-plus  # 默认值，也可改为 qwen-max、qwen-long 等
 ```bash
 # Linux/Mac
 export AI_BAILIAN_API_KEY=sk-your-key
-export AI_MODEL=qwen-plus  # 可选
+export AI_MODEL=qwen3.5-flash  # 可选
 
 # Windows PowerShell
 $env:AI_BAILIAN_API_KEY="sk-your-key"
-$env:AI_MODEL="qwen-plus"  # 可选
+$env:AI_MODEL="qwen3.5-flash"  # 可选
 ```
 
 ### 方式 3: 在 IDE 中配置
@@ -101,7 +101,7 @@ WebSocket failed: Expected HTTP 101 response but was '401 Unauthorized'
 2. **限制并发**: 配置 `rate-limit` 参数控制并发数
 3. **选择合适模型**:
    - 开发测试用 `qwen-turbo`（更便宜）
-   - 生产环境用 `qwen-plus`（效果更好）
+- 生产环境优先按场景选择；当前默认使用 `qwen3.5-flash`
 4. **控制面试时长**: 通过 `plannedDuration` 参数限制面试时长
 
 ---

@@ -57,7 +57,7 @@ public class InterviewPersistenceService {
             session.setCurrentQuestionIndex(0);
             session.setStatus(InterviewSessionEntity.SessionStatus.CREATED);
             session.setQuestionsJson(objectMapper.writeValueAsString(questions));
-            session.setLlmProvider(llmProvider != null ? llmProvider : InterviewDefaults.LLM_PROVIDER);
+            session.setLlmProvider(llmProvider != null ? llmProvider : "default");
             session.setSkillId(skillId != null ? skillId : InterviewDefaults.SKILL_ID);
             session.setDifficulty(difficulty != null ? difficulty : InterviewDefaults.DIFFICULTY);
 

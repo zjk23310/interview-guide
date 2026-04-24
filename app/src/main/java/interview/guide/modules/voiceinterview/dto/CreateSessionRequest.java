@@ -27,6 +27,5 @@ public class CreateSessionRequest {
     @Builder.Default
     private Integer plannedDuration = 30;
 
-    @Builder.Default
-    private String llmProvider = "dashscope";
+    private String llmProvider;
 }

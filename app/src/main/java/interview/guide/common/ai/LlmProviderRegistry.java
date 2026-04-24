@@ -20,9 +20,7 @@ import org.springframework.ai.retry.RetryUtils;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestClient;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -65,9 +63,8 @@ public class LlmProviderRegistry {
      * @throws IllegalArgumentException if the providerId is unknown
      */
     public ChatClient getChatClient(String providerId) {
-        log.info("[LlmProviderRegistry] Requesting client for provider: {}", providerId);
         return clientCache.computeIfAbsent(providerId, id -> {
-            log.info("[LlmProviderRegistry] Cache miss. Creating new client for: {}", id);
+            log.info("[LlmProviderRegistry] Creating new client for provider: {}", id);
             return createChatClient(id);
         });
     }
@@ -85,9 +82,10 @@ public class LlmProviderRegistry {
      * Get a ChatClient for the specified provider, falling back to the default if null or blank.
      */
     public ChatClient getChatClientOrDefault(String providerId) {
-        return (providerId != null && !providerId.isBlank())
-            ? getChatClient(providerId)
-            : getDefaultChatClient();
+        if (providerId != null && !providerId.isBlank()) {
+            return getChatClient(providerId);
+        }
+        return getDefaultChatClient();
     }
 
     /**
@@ -165,26 +163,14 @@ public class LlmProviderRegistry {
             log.error("[LlmProviderRegistry] Provider config not found: {}", providerId);
             throw new IllegalArgumentException("Unknown LLM provider: " + providerId);
         }
-
         log.info("[LlmProviderRegistry] Building ChatModel - Provider: {}, BaseUrl: {}, Model: {}",
                  providerId, config.getBaseUrl(), config.getModel());
 
-        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
-        requestFactory.setConnectTimeout(10000);
-        requestFactory.setReadTimeout(300000);
-
-        RestClient.Builder restClientBuilder = RestClient.builder()
-                .requestFactory(requestFactory);
-
-        OpenAiApi openAiApi = OpenAiApi.builder()
-                .baseUrl(config.getBaseUrl())
-                .apiKey(config.getApiKey())
-                .restClientBuilder(restClientBuilder)
-                .build();
+        OpenAiApi openAiApi = ApiPathResolver.buildOpenAiApi(config.getBaseUrl(), config.getApiKey());
 
         OpenAiChatOptions options = OpenAiChatOptions.builder()
                 .model(config.getModel())
-                .temperature(0.2)
+                .temperature(config.getTemperature() != null ? config.getTemperature() : 0.2)
                 .build();
 
         return new OpenAiChatModel(

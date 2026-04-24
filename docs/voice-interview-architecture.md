@@ -195,7 +195,7 @@ GET    /api/voice-interview/sessions/{id}/evaluation # 获取评估报告
 
 #### DashscopeLlmService
 - **职责**: LLM对话生成
-- **技术**: 阿里云DashScope (qwen-plus)
+- **技术**: 阿里云DashScope (qwen3.5-flash)
 - **功能**:
   - 角色扮演（面试官角色）
   - 多轮对话上下文
@@ -437,7 +437,7 @@ ai.bailian.api-key: ${AI_BAILIAN_API_KEY}
 spring.ai.openai.api-key: ${AI_BAILIAN_API_KEY}
 
 # AI 模型配置
-ai.model: qwen-plus  # 可选: qwen-max, qwen-long 等
+ai.model: qwen3.5-flash  # 可选: qwen3.5-plus, qwen-max 等
 ```
 
 ### 语音服务配置

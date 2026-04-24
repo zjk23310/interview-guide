@@ -16,8 +16,6 @@ import java.util.Map;
 @ConfigurationProperties(prefix = "app.voice-interview")
 public class VoiceInterviewProperties {
 
-    private String llmProvider = "dashscope";
-
     private PhaseConfig phase = new PhaseConfig();
     private AliyunConfig aliyun = new AliyunConfig();
     private RateLimitConfig rateLimit = new RateLimitConfig();

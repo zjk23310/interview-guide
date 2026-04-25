@@ -97,6 +97,17 @@ public class LlmProviderRegistry {
     }
 
     /**
+     * 获取结构化出题专用 ChatClient。
+     *
+     * <p>文字面试出题要求模型一次性返回可解析 JSON，不应混入工具调用消息。Skill 分类、
+     * 题量分配和 references 由后端注入 Prompt，避免不同 OpenAI 兼容 Provider 对
+     * tool-call 消息链路校验差异导致请求失败。</p>
+     */
+    public ChatClient getQuestionGenerationChatClient(String providerId) {
+        return getPlainChatClient(providerId);
+    }
+
+    /**
      * 获取语音面试专用 ChatClient：SkillsTool + ToolCallAdvisor（流式）。
      * 不加 Memory Advisor（语音面试手动管理对话历史）。
      */

@@ -74,12 +74,9 @@ public class InterviewSessionService {
         List<HistoricalQuestion> historicalQuestions =
             persistenceService.getHistoricalQuestions(skillId, request.resumeId());
 
-        // 获取 LLM 客户端
-        ChatClient chatClient = llmProviderRegistry.getChatClientOrDefault(request.llmProvider());
-
         // 基于 Skill 生成面试问题
         List<InterviewQuestionDTO> questions = questionService.generateQuestionsBySkill(
-            chatClient,
+            request.llmProvider(),
             skillId,
             difficulty,
             request.resumeText(),

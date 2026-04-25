@@ -8,10 +8,6 @@
 ## 面试方向
 {skillName}（{skillDescription}）
 
-## Skill Tool 指令
-请先调用 Skill 工具：
-- command: {skillToolCommand}
-
 ## 问题分布要求
 | 方向 | 数量 | 说明 |
 |------|------|------|

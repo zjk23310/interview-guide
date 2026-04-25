@@ -103,7 +103,7 @@ export default function Layout() {
       id: 'system',
       title: '系统',
       items: [
-        { id: 'settings', path: '/settings', label: '设置', icon: Settings, description: '管理文字服务' },
+        { id: 'settings', path: '/settings', label: '设置', icon: Settings, description: '管理模型和语音服务' },
       ],
     },
   ];

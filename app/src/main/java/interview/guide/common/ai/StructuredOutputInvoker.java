@@ -76,11 +76,12 @@ public class StructuredOutputInvoker {
                 ? securedSystemPrompt
                 : buildRetrySystemPrompt(securedSystemPrompt, lastError);
             try {
-                T result = chatClient.prompt()
+                String content = chatClient.prompt()
                     .system(attemptSystemPrompt)
                     .user(userPrompt)
                     .call()
-                    .entity(outputConverter);
+                    .content();
+                T result = convertWithRepair(content, outputConverter, logContext, log);
                 recordAttempt(contextTag, STATUS_SUCCESS);
                 recordInvocation(contextTag, STATUS_SUCCESS, startNanos);
                 return result;
@@ -102,6 +103,81 @@ public class StructuredOutputInvoker {
             errorCode,
             errorPrefix + (lastError != null ? lastError.getMessage() : "unknown")
         );
+    }
+
+    private <T> T convertWithRepair(
+        String content,
+        BeanOutputConverter<T> outputConverter,
+        String logContext,
+        Logger log
+    ) {
+        try {
+            return outputConverter.convert(content);
+        } catch (Exception firstError) {
+            String repaired = repairUnescapedQuotesInJsonStrings(content);
+            if (!repaired.equals(content)) {
+                try {
+                    T result = outputConverter.convert(repaired);
+                    log.warn("{}结构化 JSON 存在未转义引号，已在本地修复后解析成功", logContext);
+                    return result;
+                } catch (Exception repairError) {
+                    firstError.addSuppressed(repairError);
+                }
+            }
+            throw firstError;
+        }
+    }
+
+    private String repairUnescapedQuotesInJsonStrings(String content) {
+        if (content == null || content.isBlank()) {
+            return content;
+        }
+        StringBuilder repaired = new StringBuilder(content.length() + 16);
+        boolean inString = false;
+        boolean escaping = false;
+        for (int i = 0; i < content.length(); i++) {
+            char ch = content.charAt(i);
+            if (!inString) {
+                if (ch == '"') {
+                    inString = true;
+                }
+                repaired.append(ch);
+                continue;
+            }
+
+            if (escaping) {
+                repaired.append(ch);
+                escaping = false;
+                continue;
+            }
+            if (ch == '\\') {
+                repaired.append(ch);
+                escaping = true;
+                continue;
+            }
+            if (ch == '"') {
+                if (isLikelyJsonStringTerminator(content, i + 1)) {
+                    inString = false;
+                    repaired.append(ch);
+                } else {
+                    repaired.append("\\\"");
+                }
+                continue;
+            }
+            repaired.append(ch);
+        }
+        return repaired.toString();
+    }
+
+    private boolean isLikelyJsonStringTerminator(String content, int start) {
+        for (int i = start; i < content.length(); i++) {
+            char next = content.charAt(i);
+            if (Character.isWhitespace(next)) {
+                continue;
+            }
+            return next == ',' || next == '}' || next == ']' || next == ':';
+        }
+        return true;
     }
 
     private String buildRetrySystemPrompt(String systemPromptWithFormat, Exception lastError) {

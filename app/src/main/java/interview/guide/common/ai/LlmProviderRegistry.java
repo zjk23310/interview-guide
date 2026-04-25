@@ -57,6 +57,13 @@ public class LlmProviderRegistry {
     private final ToolCallingManager toolCallingManager;
     private final ObservationRegistry observationRegistry;
     private final ToolCallback interviewSkillsToolCallback;
+    private static final Map<String, String> RECOMMENDED_EMBEDDING_MODELS = Map.of(
+        "dashscope", "text-embedding-v3",
+        "glm", "embedding-3",
+        "zhipu", "embedding-3",
+        "baidu", "Embedding-V1",
+        "minimax", "embo-01"
+    );
 
     @Autowired
     public LlmProviderRegistry(
@@ -227,12 +234,22 @@ public class LlmProviderRegistry {
             throw new BusinessException(ErrorCode.PROVIDER_CONFIG_READ_FAILED,
                 "Provider '" + providerId + "' 未配置可用的 Embedding 模型，无法执行知识库向量化");
         }
+        if (looksLikeChatModel(config.embeddingModel())) {
+            String recommendation = RECOMMENDED_EMBEDDING_MODELS.get(providerId.toLowerCase());
+            String suffix = recommendation != null
+                ? "，推荐填写 " + recommendation
+                : "，请填写该厂商真实的 Embedding 模型名";
+            throw new BusinessException(ErrorCode.PROVIDER_CONFIG_READ_FAILED,
+                "Provider '" + providerId + "' 的 Embedding Model 配成了聊天模型 '"
+                    + config.embeddingModel() + "'" + suffix);
+        }
         log.info("[LlmProviderRegistry] Building EmbeddingModel - Provider: {}, BaseUrl: {}, Model: {}",
             providerId, config.baseUrl(), config.embeddingModel());
 
         OpenAiApi openAiApi = ApiPathResolver.buildOpenAiApi(config.baseUrl(), config.apiKey());
         OpenAiEmbeddingOptions options = OpenAiEmbeddingOptions.builder()
             .model(config.embeddingModel())
+            .dimensions(resolveEmbeddingDimensions(config.embeddingDimensions()))
             .build();
 
         return new OpenAiEmbeddingModel(
@@ -345,6 +362,7 @@ public class LlmProviderRegistry {
             encryptionService.decrypt(entity.getApiKeyNonce(), entity.getApiKeyCiphertext()),
             entity.getModel(),
             entity.getEmbeddingModel(),
+            entity.getEmbeddingDimensions(),
             entity.isSupportsEmbedding(),
             entity.getTemperature()
         );
@@ -364,6 +382,7 @@ public class LlmProviderRegistry {
             config.getApiKey(),
             config.getModel(),
             config.getEmbeddingModel(),
+            config.getEmbeddingDimensions(),
             supportsEmbedding,
             config.getTemperature()
         );
@@ -373,12 +392,30 @@ public class LlmProviderRegistry {
         return value == null || value.isBlank();
     }
 
+    private Integer resolveEmbeddingDimensions(Integer configuredDimensions) {
+        if (configuredDimensions != null && configuredDimensions > 0) {
+            return configuredDimensions;
+        }
+        return properties.getEmbeddingDimensions();
+    }
+
+    private boolean looksLikeChatModel(String model) {
+        String lower = model.toLowerCase();
+        return lower.startsWith("glm-")
+            || lower.startsWith("deepseek")
+            || lower.startsWith("kimi")
+            || lower.startsWith("moonshot")
+            || lower.startsWith("qwen")
+            || lower.startsWith("ernie");
+    }
+
     private record ProviderSnapshot(
         String id,
         String baseUrl,
         String apiKey,
         String model,
         String embeddingModel,
+        Integer embeddingDimensions,
         boolean supportsEmbedding,
         Double temperature
     ) {

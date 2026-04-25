@@ -5,6 +5,7 @@ public record UpdateProviderRequest(
     String apiKey,
     String model,
     String embeddingModel,
+    Integer embeddingDimensions,
     Boolean supportsEmbedding,
     Double temperature
 ) {
@@ -15,6 +16,6 @@ public record UpdateProviderRequest(
         String embeddingModel,
         Double temperature
     ) {
-        this(baseUrl, apiKey, model, embeddingModel, null, temperature);
+        this(baseUrl, apiKey, model, embeddingModel, null, null, temperature);
     }
 }

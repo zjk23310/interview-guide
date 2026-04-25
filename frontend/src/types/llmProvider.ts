@@ -4,6 +4,7 @@ export interface ProviderItem {
   maskedApiKey: string;
   model: string;
   embeddingModel: string | null;
+  embeddingDimensions: number | null;
   supportsEmbedding: boolean;
   temperature: number | null;
   defaultChatProvider: boolean;
@@ -16,6 +17,7 @@ export interface CreateProviderRequest {
   apiKey: string;
   model: string;
   embeddingModel?: string;
+  embeddingDimensions?: number;
   supportsEmbedding?: boolean;
   temperature?: number;
 }
@@ -25,6 +27,7 @@ export interface UpdateProviderRequest {
   apiKey?: string;
   model?: string;
   embeddingModel?: string;
+  embeddingDimensions?: number;
   supportsEmbedding?: boolean;
   temperature?: number;
 }

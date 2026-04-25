@@ -980,10 +980,10 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
 
             for (VoiceInterviewMessageEntity msg : messages) {
                 if (msg.getUserRecognizedText() != null && !msg.getUserRecognizedText().isEmpty()) {
-                    history.add("用户：" + msg.getUserRecognizedText());
+                    history.add("候选人：" + msg.getUserRecognizedText());
                 }
                 if (msg.getAiGeneratedText() != null && !msg.getAiGeneratedText().isEmpty()) {
-                    history.add("AI：" + msg.getAiGeneratedText());
+                    history.add("面试官：" + msg.getAiGeneratedText());
                 }
             }
 

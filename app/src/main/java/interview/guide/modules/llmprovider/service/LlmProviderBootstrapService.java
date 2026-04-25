@@ -56,6 +56,7 @@ public class LlmProviderBootstrapService {
           .apiKeyCiphertext(encrypted.ciphertext())
           .model(config.getModel())
           .embeddingModel(trimOrNull(config.getEmbeddingModel()))
+          .embeddingDimensions(resolveEmbeddingDimensions(config.getEmbeddingDimensions()))
           .supportsEmbedding(supportsEmbedding)
           .temperature(config.getTemperature())
           .enabled(true)
@@ -110,6 +111,13 @@ public class LlmProviderBootstrapService {
     return provider.isEnabled()
         && provider.isSupportsEmbedding()
         && !isBlank(provider.getEmbeddingModel());
+  }
+
+  private Integer resolveEmbeddingDimensions(Integer configuredDimensions) {
+    if (configuredDimensions != null && configuredDimensions > 0) {
+      return configuredDimensions;
+    }
+    return properties.getEmbeddingDimensions();
   }
 
   private String trimOrNull(String value) {

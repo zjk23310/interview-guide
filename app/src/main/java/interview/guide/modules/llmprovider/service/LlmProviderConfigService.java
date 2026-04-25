@@ -65,6 +65,14 @@ public class LlmProviderConfigService {
   private final QwenAsrService asrService;
   private final QwenTtsService ttsService;
 
+  private static final Map<String, String> RECOMMENDED_EMBEDDING_MODELS = Map.of(
+      "dashscope", "text-embedding-v3",
+      "glm", "embedding-3",
+      "zhipu", "embedding-3",
+      "baidu", "Embedding-V1",
+      "minimax", "embo-01"
+  );
+
   @Autowired
   public LlmProviderConfigService(
       LlmProviderProperties properties,
@@ -139,6 +147,7 @@ public class LlmProviderConfigService {
                 .maskedApiKey(maskApiKey(e.getValue().getApiKey()))
                 .model(e.getValue().getModel())
                 .embeddingModel(e.getValue().getEmbeddingModel())
+                .embeddingDimensions(resolveEmbeddingDimensions(e.getValue().getEmbeddingDimensions()))
                 .supportsEmbedding(Boolean.TRUE.equals(e.getValue().getSupportsEmbedding())
                     || trimOrNull(e.getValue().getEmbeddingModel()) != null)
                 .temperature(e.getValue().getTemperature())
@@ -155,6 +164,7 @@ public class LlmProviderConfigService {
               .maskedApiKey(maskApiKey(decryptApiKey(provider)))
               .model(provider.getModel())
               .embeddingModel(provider.getEmbeddingModel())
+              .embeddingDimensions(resolveEmbeddingDimensions(provider.getEmbeddingDimensions()))
               .supportsEmbedding(provider.isSupportsEmbedding())
               .temperature(provider.getTemperature())
               .defaultChatProvider(provider.getId().equals(setting.getDefaultChatProviderId()))
@@ -177,6 +187,7 @@ public class LlmProviderConfigService {
             .maskedApiKey(maskApiKey(config.getApiKey()))
             .model(config.getModel())
             .embeddingModel(config.getEmbeddingModel())
+            .embeddingDimensions(resolveEmbeddingDimensions(config.getEmbeddingDimensions()))
             .supportsEmbedding(Boolean.TRUE.equals(config.getSupportsEmbedding())
                 || trimOrNull(config.getEmbeddingModel()) != null)
             .temperature(config.getTemperature())
@@ -192,6 +203,7 @@ public class LlmProviderConfigService {
           .maskedApiKey(maskApiKey(decryptApiKey(provider)))
           .model(provider.getModel())
           .embeddingModel(provider.getEmbeddingModel())
+          .embeddingDimensions(resolveEmbeddingDimensions(provider.getEmbeddingDimensions()))
           .supportsEmbedding(provider.isSupportsEmbedding())
           .temperature(provider.getTemperature())
           .defaultChatProvider(id.equals(setting.getDefaultChatProviderId()))
@@ -318,13 +330,11 @@ public class LlmProviderConfigService {
       String model = requireNonBlank(request.model(), "model");
       String apiKey = requireNonBlank(request.apiKey(), "apiKey");
       String embeddingModel = trimOrNull(request.embeddingModel());
+      Integer embeddingDimensions = resolveEmbeddingDimensions(request.embeddingDimensions());
       boolean supportsEmbedding = request.supportsEmbedding() != null
           ? request.supportsEmbedding()
           : embeddingModel != null;
-      if (supportsEmbedding && embeddingModel == null) {
-        throw new BusinessException(ErrorCode.BAD_REQUEST,
-            "支持 Embedding 的 Provider 必须填写 embeddingModel");
-      }
+      validateEmbeddingConfig(providerId, supportsEmbedding, embeddingModel, embeddingDimensions);
 
       ApiKeyEncryptionService.EncryptedValue encrypted = encryptionService.encrypt(apiKey);
       providerRepository.save(LlmProviderEntity.builder()
@@ -334,6 +344,7 @@ public class LlmProviderConfigService {
           .apiKeyCiphertext(encrypted.ciphertext())
           .model(model)
           .embeddingModel(embeddingModel)
+          .embeddingDimensions(embeddingDimensions)
           .supportsEmbedding(supportsEmbedding)
           .temperature(request.temperature())
           .enabled(true)
@@ -374,13 +385,17 @@ public class LlmProviderConfigService {
       if (request.embeddingModel() != null) {
         provider.setEmbeddingModel(trimOrNull(request.embeddingModel()));
       }
+      if (request.embeddingDimensions() != null) {
+        provider.setEmbeddingDimensions(resolveEmbeddingDimensions(request.embeddingDimensions()));
+      }
       if (request.supportsEmbedding() != null) {
         provider.setSupportsEmbedding(request.supportsEmbedding());
       }
-      if (provider.isSupportsEmbedding() && trimOrNull(provider.getEmbeddingModel()) == null) {
-        throw new BusinessException(ErrorCode.BAD_REQUEST,
-            "支持 Embedding 的 Provider 必须填写 embeddingModel");
-      }
+      validateEmbeddingConfig(
+          id,
+          provider.isSupportsEmbedding(),
+          provider.getEmbeddingModel(),
+          resolveEmbeddingDimensions(provider.getEmbeddingDimensions()));
       if (request.temperature() != null) {
         provider.setTemperature(request.temperature());
       }
@@ -453,10 +468,16 @@ public class LlmProviderConfigService {
         throw new BusinessException(ErrorCode.BAD_REQUEST, "defaultEmbeddingProvider 不能为空");
       }
       LlmProviderEntity provider = getProviderEntityOrThrow(providerId);
-      if (!provider.isSupportsEmbedding() || trimOrNull(provider.getEmbeddingModel()) == null) {
+      String embeddingModel = trimOrNull(provider.getEmbeddingModel());
+      if (!provider.isSupportsEmbedding() || embeddingModel == null) {
         throw new BusinessException(ErrorCode.BAD_REQUEST,
             "Provider '" + providerId + "' 不支持 Embedding，不能设为默认向量服务");
       }
+      validateEmbeddingConfig(
+          providerId,
+          true,
+          embeddingModel,
+          resolveEmbeddingDimensions(provider.getEmbeddingDimensions()));
       LlmGlobalSettingEntity setting = getGlobalSettingOrThrow();
       setting.setDefaultEmbeddingProviderId(providerId);
       globalSettingRepository.save(setting);
@@ -559,6 +580,7 @@ public class LlmProviderConfigService {
     config.setApiKey(request.apiKey());
     config.setModel(request.model());
     config.setEmbeddingModel(request.embeddingModel());
+    config.setEmbeddingDimensions(request.embeddingDimensions());
     config.setSupportsEmbedding(request.supportsEmbedding());
     config.setTemperature(request.temperature());
     providers.put(request.id(), config);
@@ -588,6 +610,9 @@ public class LlmProviderConfigService {
     if (trimmedModel != null) config.setModel(trimmedModel);
     if (request.embeddingModel() != null) {
       config.setEmbeddingModel(trimOrNull(request.embeddingModel()));
+    }
+    if (request.embeddingDimensions() != null) {
+      config.setEmbeddingDimensions(resolveEmbeddingDimensions(request.embeddingDimensions()));
     }
     if (request.supportsEmbedding() != null) {
       config.setSupportsEmbedding(request.supportsEmbedding());
@@ -634,6 +659,7 @@ public class LlmProviderConfigService {
         config.getApiKey(),
         config.getModel(),
         config.getEmbeddingModel(),
+        resolveEmbeddingDimensions(config.getEmbeddingDimensions()),
         Boolean.TRUE.equals(config.getSupportsEmbedding()) || trimOrNull(config.getEmbeddingModel()) != null,
         config.getTemperature()
     );
@@ -658,6 +684,7 @@ public class LlmProviderConfigService {
         decryptApiKey(provider),
         provider.getModel(),
         provider.getEmbeddingModel(),
+        resolveEmbeddingDimensions(provider.getEmbeddingDimensions()),
         provider.isSupportsEmbedding(),
         provider.getTemperature()
     );
@@ -722,6 +749,49 @@ public class LlmProviderConfigService {
       throw new BusinessException(ErrorCode.BAD_REQUEST, fieldName + " 不能为空");
     }
     return normalized;
+  }
+
+  private void validateEmbeddingConfig(
+      String providerId,
+      boolean supportsEmbedding,
+      String embeddingModel,
+      Integer embeddingDimensions) {
+    String normalizedModel = trimOrNull(embeddingModel);
+    if (!supportsEmbedding) {
+      return;
+    }
+    if (normalizedModel == null) {
+      throw new BusinessException(ErrorCode.BAD_REQUEST,
+          "支持 Embedding 的 Provider 必须填写 embeddingModel");
+    }
+    if (looksLikeChatModel(normalizedModel)) {
+      String recommendation = RECOMMENDED_EMBEDDING_MODELS.get(providerId.toLowerCase());
+      String suffix = recommendation != null
+          ? "，推荐填写 " + recommendation
+          : "，请填写该厂商真实的 Embedding 模型名";
+      throw new BusinessException(ErrorCode.BAD_REQUEST,
+          "Embedding Model 不能填写聊天模型 '" + normalizedModel + "'" + suffix);
+    }
+    if (embeddingDimensions == null || embeddingDimensions <= 0) {
+      throw new BusinessException(ErrorCode.BAD_REQUEST, "向量维度必须为正整数");
+    }
+  }
+
+  private Integer resolveEmbeddingDimensions(Integer configuredDimensions) {
+    if (configuredDimensions != null && configuredDimensions > 0) {
+      return configuredDimensions;
+    }
+    return properties.getEmbeddingDimensions();
+  }
+
+  private boolean looksLikeChatModel(String model) {
+    String lower = model.toLowerCase();
+    return lower.startsWith("glm-")
+        || lower.startsWith("deepseek")
+        || lower.startsWith("kimi")
+        || lower.startsWith("moonshot")
+        || lower.startsWith("qwen")
+        || lower.startsWith("ernie");
   }
 
   private String toEnvKey(String providerId) {
@@ -822,6 +892,9 @@ public class LlmProviderConfigService {
       values.put("model", config.getModel());
       if (config.getEmbeddingModel() != null) {
         values.put("embedding-model", config.getEmbeddingModel());
+      }
+      if (config.getEmbeddingDimensions() != null) {
+        values.put("embedding-dimensions", config.getEmbeddingDimensions());
       }
       if (config.getTemperature() != null) {
         values.put("temperature", config.getTemperature());
@@ -1103,6 +1176,7 @@ public class LlmProviderConfigService {
       String apiKey,
       String model,
       String embeddingModel,
+      Integer embeddingDimensions,
       boolean supportsEmbedding,
       Double temperature
   ) {

@@ -39,6 +39,9 @@ public class LlmProviderEntity {
   @Column(name = "embedding_model", length = 128)
   private String embeddingModel;
 
+  @Column(name = "embedding_dimensions")
+  private Integer embeddingDimensions;
+
   @Column(name = "supports_embedding", nullable = false)
   private boolean supportsEmbedding;
 

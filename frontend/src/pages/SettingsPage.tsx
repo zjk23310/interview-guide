@@ -17,6 +17,7 @@ const PROVIDER_PRESETS: Record<string, {
   baseUrl: string;
   models: { value: string; label: string }[];
   embeddingModels?: { value: string; label: string }[];
+  embeddingDimensions?: number;
   supportsEmbedding: boolean;
 }> = {
   dashscope: {
@@ -34,6 +35,7 @@ const PROVIDER_PRESETS: Record<string, {
     embeddingModels: [
       { value: 'text-embedding-v3', label: 'text-embedding-v3 — 推荐' },
     ],
+    embeddingDimensions: 1024,
     supportsEmbedding: true,
   },
   deepseek: {
@@ -61,6 +63,7 @@ const PROVIDER_PRESETS: Record<string, {
     embeddingModels: [
       { value: 'embedding-3', label: 'embedding-3 — 推荐' },
     ],
+    embeddingDimensions: 1024,
     supportsEmbedding: true,
   },
   kimi: {
@@ -151,6 +154,7 @@ export default function SettingsPage() {
   const [formApiKey, setFormApiKey] = useState('');
   const [formModel, setFormModel] = useState('');
   const [formEmbeddingModel, setFormEmbeddingModel] = useState('');
+  const [formEmbeddingDimensions, setFormEmbeddingDimensions] = useState('1024');
   const [formSupportsEmbedding, setFormSupportsEmbedding] = useState(false);
   const [formTemperature, setFormTemperature] = useState('');
   const [showApiKey, setShowApiKey] = useState(false);
@@ -174,6 +178,11 @@ export default function SettingsPage() {
   const [pendingDefaultEmbeddingProviderId, setPendingDefaultEmbeddingProviderId] = useState<string | null>(null);
   const [settingDefault, setSettingDefault] = useState(false);
   const [settingEmbeddingDefault, setSettingEmbeddingDefault] = useState(false);
+
+  const pendingEmbeddingProvider = useMemo(
+    () => providers.find(provider => provider.id === pendingDefaultEmbeddingProviderId) ?? null,
+    [pendingDefaultEmbeddingProviderId, providers],
+  );
 
   // Voice config state
   const [asrConfig, setAsrConfig] = useState<AsrConfig | null>(null);
@@ -236,6 +245,7 @@ export default function SettingsPage() {
     setFormApiKey('');
     setFormModel('');
     setFormEmbeddingModel('');
+    setFormEmbeddingDimensions('1024');
     setFormSupportsEmbedding(false);
     setShowApiKey(false);
     setShowModal(true);
@@ -248,6 +258,7 @@ export default function SettingsPage() {
     setFormApiKey('');
     setFormModel(provider.model);
     setFormEmbeddingModel(provider.embeddingModel || '');
+    setFormEmbeddingDimensions(provider.embeddingDimensions != null ? String(provider.embeddingDimensions) : '1024');
     setFormSupportsEmbedding(provider.supportsEmbedding);
     setFormTemperature(provider.temperature != null ? String(provider.temperature) : '');
     setShowApiKey(false);
@@ -266,7 +277,12 @@ export default function SettingsPage() {
       return;
     }
     if (formSupportsEmbedding && !formEmbeddingModel.trim()) {
-      showToast('支持向量化时需要填写 Embedding Model', 'error');
+      showToast('支持向量化时需要填写向量模型，例如 GLM 填 embedding-3', 'error');
+      return;
+    }
+    const embeddingDimensions = parseInt(formEmbeddingDimensions.trim(), 10);
+    if (formSupportsEmbedding && (!Number.isFinite(embeddingDimensions) || embeddingDimensions <= 0)) {
+      showToast('向量维度必须为正整数，当前 pgvector 表为 1024 维', 'error');
       return;
     }
     setSaving(true);
@@ -280,6 +296,7 @@ export default function SettingsPage() {
       };
       if (formEmbeddingModel.trim()) {
         data.embeddingModel = formEmbeddingModel.trim();
+        data.embeddingDimensions = embeddingDimensions;
       }
       if (formTemperature.trim()) {
         const temp = parseFloat(formTemperature.trim());
@@ -304,7 +321,12 @@ export default function SettingsPage() {
       return;
     }
     if (formSupportsEmbedding && !formEmbeddingModel.trim()) {
-      showToast('支持向量化时需要填写 Embedding Model', 'error');
+      showToast('支持向量化时需要填写向量模型，例如 GLM 填 embedding-3', 'error');
+      return;
+    }
+    const embeddingDimensions = parseInt(formEmbeddingDimensions.trim(), 10);
+    if (formSupportsEmbedding && (!Number.isFinite(embeddingDimensions) || embeddingDimensions <= 0)) {
+      showToast('向量维度必须为正整数，当前 pgvector 表为 1024 维', 'error');
       return;
     }
     setSaving(true);
@@ -315,6 +337,9 @@ export default function SettingsPage() {
         embeddingModel: formEmbeddingModel.trim(),
         supportsEmbedding: formSupportsEmbedding,
       };
+      if (formSupportsEmbedding) {
+        data.embeddingDimensions = embeddingDimensions;
+      }
       if (formApiKey.trim()) {
         data.apiKey = formApiKey.trim();
       }
@@ -389,7 +414,7 @@ export default function SettingsPage() {
         defaultProvider: pendingDefaultProviderId,
         defaultEmbeddingProvider: defaultEmbeddingProviderId,
       });
-      showToast(`已将 "${pendingDefaultProviderId}" 设为默认文字服务`);
+      showToast(`已将 "${pendingDefaultProviderId}" 设为默认聊天服务`);
       setPendingDefaultProviderId(null);
       await loadData();
     } catch (err) {
@@ -418,7 +443,7 @@ export default function SettingsPage() {
         defaultProvider: defaultProviderId,
         defaultEmbeddingProvider: pendingDefaultEmbeddingProviderId,
       });
-      showToast(`已将 "${pendingDefaultEmbeddingProviderId}" 设为默认向量服务`);
+      showToast(`已将 "${pendingDefaultEmbeddingProviderId}" 的 ${pendingEmbeddingProvider?.embeddingModel ?? '向量模型'} (${pendingEmbeddingProvider?.embeddingDimensions ?? 1024}维) 设为默认向量服务`);
       setPendingDefaultEmbeddingProviderId(null);
       await loadData();
     } catch (err) {
@@ -525,7 +550,7 @@ export default function SettingsPage() {
           </div>
           <div>
             <h1 className="text-2xl font-bold text-slate-800 dark:text-white">系统设置</h1>
-            <p className="text-slate-500 dark:text-slate-400 mt-0.5 text-sm">管理文字服务和模块配置</p>
+            <p className="text-slate-500 dark:text-slate-400 mt-0.5 text-sm">管理聊天模型、向量模型和模块配置</p>
           </div>
         </div>
       </div>
@@ -547,7 +572,7 @@ export default function SettingsPage() {
               {/* Provider header */}
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-lg font-bold text-slate-800 dark:text-white">
-                  文字服务
+                  模型服务
                 </h2>
                 <motion.button
                   onClick={openCreateModal}
@@ -593,7 +618,7 @@ export default function SettingsPage() {
                             <h3 className="truncate text-sm font-semibold text-slate-800 dark:text-white">
                               {provider.id}
                             </h3>
-                            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">文字模型 Provider</p>
+                            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">聊天/向量 Provider</p>
                           </div>
                         </div>
                         <div className="flex flex-col items-end gap-1">
@@ -609,14 +634,17 @@ export default function SettingsPage() {
                       {/* Card details */}
                       <dl className={DETAILS_CLASS}>
                         <ConfigRow label="Base URL" value={provider.baseUrl} title={provider.baseUrl} emphasis />
-                        <ConfigRow label="模型" value={provider.model} title={provider.model} emphasis />
+                        <ConfigRow label="聊天模型" value={provider.model} title={provider.model} emphasis />
                         <ConfigRow
-                          label="向量能力"
+                          label="向量模型"
                           value={canUseEmbedding ? '支持' : '不支持'}
                           title={canUseEmbedding ? provider.embeddingModel ?? '' : '不能用于知识库向量化'}
                         />
                         {provider.embeddingModel && (
-                          <ConfigRow label="向量模型" value={provider.embeddingModel} title={provider.embeddingModel} />
+                          <ConfigRow label="实际向量" value={provider.embeddingModel} title={provider.embeddingModel} emphasis={isEmbeddingDefault} />
+                        )}
+                        {canUseEmbedding && (
+                          <ConfigRow label="向量维度" value={`${provider.embeddingDimensions ?? 1024} 维`} emphasis={isEmbeddingDefault} />
                         )}
                         {provider.temperature != null && (
                           <ConfigRow label="温度" value={provider.temperature} />
@@ -680,7 +708,7 @@ export default function SettingsPage() {
                           title="设为默认文字服务"
                         >
                           <Plug className="w-3.5 h-3.5" />
-                          设为默认
+                          设为文字
                         </button>
                         <button
                           onClick={() => handleSetEmbeddingDefault(provider)}
@@ -882,6 +910,7 @@ export default function SettingsPage() {
                             setFormBaseUrl(preset.baseUrl);
                             setFormSupportsEmbedding(preset.supportsEmbedding);
                             setFormEmbeddingModel(preset.embeddingModels?.[0]?.value ?? '');
+                            setFormEmbeddingDimensions(String(preset.embeddingDimensions ?? 1024));
                           }
                         }
                       }}
@@ -943,10 +972,10 @@ export default function SettingsPage() {
                     </div>
                   </div>
 
-                  {/* Model */}
+                  {/* Chat Model */}
                   <div>
                     <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
-                      Model <span className="text-red-500">*</span>
+                      聊天模型 <span className="text-red-500">*</span>
                     </label>
                     <div className="relative">
                       <input
@@ -958,7 +987,7 @@ export default function SettingsPage() {
                         }}
                         onFocus={() => currentPreset && setShowModelDropdown(true)}
                         onBlur={() => setTimeout(() => setShowModelDropdown(false), 150)}
-                        placeholder={currentPreset ? '从下拉列表选择或输入自定义模型名' : '例如: qwen3.5-flash, deepseek-v4-flash, glm-5'}
+                        placeholder={currentPreset ? '从下拉列表选择或输入自定义聊天模型名' : '例如: qwen3.5-flash, deepseek-v4-flash, glm-5'}
                         className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-600
                           bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white
                           placeholder:text-slate-400 focus:outline-none focus:ring-2
@@ -1005,7 +1034,7 @@ export default function SettingsPage() {
                   <div>
                     <div className="mb-1.5 flex items-center justify-between gap-3">
                       <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
-                        Embedding Model <span className="text-slate-400 font-normal">(知识库向量化)</span>
+                        向量模型 <span className="text-slate-400 font-normal">(知识库向量化，例如 GLM 填 embedding-3)</span>
                       </label>
                       <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-600 dark:text-slate-300">
                         <input
@@ -1015,6 +1044,7 @@ export default function SettingsPage() {
                             setFormSupportsEmbedding(e.target.checked);
                             if (!e.target.checked) {
                               setFormEmbeddingModel('');
+                              setFormEmbeddingDimensions('1024');
                             }
                           }}
                           className="h-4 w-4 rounded border-slate-300 text-primary-600 focus:ring-primary-500"
@@ -1034,7 +1064,7 @@ export default function SettingsPage() {
                         onBlur={() => setTimeout(() => setShowEmbeddingDropdown(false), 150)}
                         disabled={!formSupportsEmbedding}
                         placeholder={formSupportsEmbedding
-                          ? (currentPreset?.embeddingModels ? '从下拉列表选择或输入自定义模型名' : '例如: text-embedding-v3')
+                          ? (currentPreset?.embeddingModels ? '从下拉列表选择或输入自定义向量模型名' : '例如: text-embedding-v3, embedding-3')
                           : 'DeepSeek / Kimi 等 Provider 通常不支持 Embedding'}
                         className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-600
                           bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white
@@ -1078,6 +1108,25 @@ export default function SettingsPage() {
                       )}
                     </div>
                   </div>
+
+                  {formSupportsEmbedding && (
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                        向量维度 <span className="text-slate-400 font-normal">(必须与 pgvector 表一致，当前为 1024)</span>
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        value={formEmbeddingDimensions}
+                        onChange={(e) => setFormEmbeddingDimensions(e.target.value)}
+                        placeholder="1024"
+                        className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-600
+                          bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white
+                          placeholder:text-slate-400 focus:outline-none focus:ring-2
+                          focus:ring-primary-500/50 focus:border-primary-400 transition-shadow"
+                      />
+                    </div>
+                  )}
 
                   {/* Temperature */}
                   <div>
@@ -1331,8 +1380,8 @@ export default function SettingsPage() {
 
       <ConfirmDialog
         open={pendingDefaultProviderId !== null}
-        title="设为默认文字服务"
-        message={`确定要将 "${pendingDefaultProviderId ?? ''}" 设为默认文字服务吗？`}
+        title="设为默认聊天服务"
+        message={`确定要将 "${pendingDefaultProviderId ?? ''}" 设为默认聊天服务吗？该操作不会改变知识库使用的向量模型。`}
         confirmText="确认设置"
         cancelText="取消"
         loading={settingDefault}
@@ -1347,7 +1396,7 @@ export default function SettingsPage() {
       <ConfirmDialog
         open={pendingDefaultEmbeddingProviderId !== null}
         title="设为默认向量服务"
-        message={`确定要将 "${pendingDefaultEmbeddingProviderId ?? ''}" 设为知识库默认向量服务吗？后续上传和重新向量化会使用该 Provider。`}
+        message={`确定要将 "${pendingDefaultEmbeddingProviderId ?? ''}" 的向量模型 "${pendingEmbeddingProvider?.embeddingModel ?? ''}"（${pendingEmbeddingProvider?.embeddingDimensions ?? 1024}维）设为知识库默认向量服务吗？后续上传和重新向量化会使用这个向量模型，不会使用聊天模型。`}
         confirmText="确认设置"
         cancelText="取消"
         loading={settingEmbeddingDefault}

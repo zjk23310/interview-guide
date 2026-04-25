@@ -3,6 +3,13 @@ package interview.guide.common.ai;
 import interview.guide.common.config.LlmProviderProperties;
 import interview.guide.common.config.LlmProviderProperties.AdvisorConfig;
 import interview.guide.common.config.LlmProviderProperties.ProviderConfig;
+import interview.guide.common.exception.BusinessException;
+import interview.guide.common.exception.ErrorCode;
+import interview.guide.modules.llmprovider.model.LlmGlobalSettingEntity;
+import interview.guide.modules.llmprovider.model.LlmProviderEntity;
+import interview.guide.modules.llmprovider.repository.LlmGlobalSettingRepository;
+import interview.guide.modules.llmprovider.repository.LlmProviderRepository;
+import interview.guide.modules.llmprovider.service.ApiKeyEncryptionService;
 import io.micrometer.observation.ObservationRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
@@ -11,10 +18,14 @@ import org.springframework.ai.chat.client.advisor.SafeGuardAdvisor;
 import org.springframework.ai.chat.client.advisor.SimpleLoggerAdvisor;
 import org.springframework.ai.chat.client.advisor.ToolCallAdvisor;
 import org.springframework.ai.chat.client.advisor.api.Advisor;
+import org.springframework.ai.document.MetadataMode;
+import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.chat.memory.MessageWindowChatMemory;
 import org.springframework.ai.model.tool.ToolCallingManager;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
+import org.springframework.ai.openai.OpenAiEmbeddingModel;
+import org.springframework.ai.openai.OpenAiEmbeddingOptions;
 import org.springframework.ai.openai.api.OpenAiApi;
 import org.springframework.ai.retry.RetryUtils;
 import org.springframework.ai.tool.ToolCallback;
@@ -38,20 +49,39 @@ public class LlmProviderRegistry {
 
     private final LlmProviderProperties properties;
     private final Map<String, ChatClient> clientCache = new ConcurrentHashMap<>();
+    private final Map<String, EmbeddingModel> embeddingModelCache = new ConcurrentHashMap<>();
+    private final LlmProviderRepository providerRepository;
+    private final LlmGlobalSettingRepository globalSettingRepository;
+    private final ApiKeyEncryptionService encryptionService;
 
     private final ToolCallingManager toolCallingManager;
     private final ObservationRegistry observationRegistry;
     private final ToolCallback interviewSkillsToolCallback;
 
+    @Autowired
     public LlmProviderRegistry(
             LlmProviderProperties properties,
+            LlmProviderRepository providerRepository,
+            LlmGlobalSettingRepository globalSettingRepository,
+            ApiKeyEncryptionService encryptionService,
             @Autowired(required = false) ToolCallingManager toolCallingManager,
             @Autowired(required = false) ObservationRegistry observationRegistry,
             @Autowired(required = false) @Qualifier("interviewSkillsToolCallback") ToolCallback interviewSkillsToolCallback) {
         this.properties = properties;
+        this.providerRepository = providerRepository;
+        this.globalSettingRepository = globalSettingRepository;
+        this.encryptionService = encryptionService;
         this.toolCallingManager = toolCallingManager;
         this.observationRegistry = observationRegistry;
         this.interviewSkillsToolCallback = interviewSkillsToolCallback;
+    }
+
+    public LlmProviderRegistry(
+            LlmProviderProperties properties,
+            ToolCallingManager toolCallingManager,
+            ObservationRegistry observationRegistry,
+            ToolCallback interviewSkillsToolCallback) {
+        this(properties, null, null, null, toolCallingManager, observationRegistry, interviewSkillsToolCallback);
     }
 
     /**
@@ -75,7 +105,7 @@ public class LlmProviderRegistry {
      * @return The default ChatClient instance
      */
     public ChatClient getDefaultChatClient() {
-        return getChatClient(properties.getDefaultProvider());
+        return getChatClient(resolveDefaultChatProviderId());
     }
 
     /**
@@ -89,22 +119,12 @@ public class LlmProviderRegistry {
     }
 
     /**
-     * 获取不带 SkillsTool 的 ChatClient，用于简历题生成等不需要 Agent 工具调用的场景。
+     * 获取不带 SkillsTool 的 ChatClient，用于结构化输出场景（出题、简历评分等）。
+     * 这些场景要求模型一次性返回可解析 JSON，不应混入工具调用消息。
      */
     public ChatClient getPlainChatClient(String providerId) {
         String id = resolveProviderId(providerId);
         return clientCache.computeIfAbsent(id + ":plain", key -> createPlainChatClient(id));
-    }
-
-    /**
-     * 获取结构化出题专用 ChatClient。
-     *
-     * <p>文字面试出题要求模型一次性返回可解析 JSON，不应混入工具调用消息。Skill 分类、
-     * 题量分配和 references 由后端注入 Prompt，避免不同 OpenAI 兼容 Provider 对
-     * tool-call 消息链路校验差异导致请求失败。</p>
-     */
-    public ChatClient getQuestionGenerationChatClient(String providerId) {
-        return getPlainChatClient(providerId);
     }
 
     /**
@@ -120,9 +140,21 @@ public class LlmProviderRegistry {
      * 清空缓存，重新加载所有 provider。
      */
     public void reload() {
-        int size = clientCache.size();
+        int size = clientCache.size() + embeddingModelCache.size();
         clientCache.clear();
+        embeddingModelCache.clear();
         log.info("[LlmProviderRegistry] Cache cleared ({} entries). Next access will re-create clients.", size);
+    }
+
+    public EmbeddingModel getEmbeddingModel(String providerId) {
+        return embeddingModelCache.computeIfAbsent(providerId, id -> {
+            log.info("[LlmProviderRegistry] Creating new embedding model for provider: {}", id);
+            return createEmbeddingModel(id);
+        });
+    }
+
+    public EmbeddingModel getDefaultEmbeddingModel() {
+        return getEmbeddingModel(resolveDefaultEmbeddingProviderId());
     }
 
     private ChatClient createChatClient(String providerId) {
@@ -169,19 +201,15 @@ public class LlmProviderRegistry {
     }
 
     private OpenAiChatModel buildChatModel(String providerId) {
-        ProviderConfig config = properties.getProviders().get(providerId);
-        if (config == null) {
-            log.error("[LlmProviderRegistry] Provider config not found: {}", providerId);
-            throw new IllegalArgumentException("Unknown LLM provider: " + providerId);
-        }
+        ProviderSnapshot config = loadProviderOrThrow(providerId);
         log.info("[LlmProviderRegistry] Building ChatModel - Provider: {}, BaseUrl: {}, Model: {}",
-                 providerId, config.getBaseUrl(), config.getModel());
+                 providerId, config.baseUrl(), config.model());
 
-        OpenAiApi openAiApi = ApiPathResolver.buildOpenAiApi(config.getBaseUrl(), config.getApiKey());
+        OpenAiApi openAiApi = ApiPathResolver.buildOpenAiApi(config.baseUrl(), config.apiKey());
 
         OpenAiChatOptions options = OpenAiChatOptions.builder()
-                .model(config.getModel())
-                .temperature(config.getTemperature() != null ? config.getTemperature() : 0.2)
+                .model(config.model())
+                .temperature(config.temperature() != null ? config.temperature() : 0.2)
                 .build();
 
         return new OpenAiChatModel(
@@ -190,6 +218,29 @@ public class LlmProviderRegistry {
                 toolCallingManager,
                 RetryUtils.DEFAULT_RETRY_TEMPLATE,
                 observationRegistry != null ? observationRegistry : ObservationRegistry.NOOP
+        );
+    }
+
+    private EmbeddingModel createEmbeddingModel(String providerId) {
+        ProviderSnapshot config = loadProviderOrThrow(providerId);
+        if (!config.supportsEmbedding() || isBlank(config.embeddingModel())) {
+            throw new BusinessException(ErrorCode.PROVIDER_CONFIG_READ_FAILED,
+                "Provider '" + providerId + "' 未配置可用的 Embedding 模型，无法执行知识库向量化");
+        }
+        log.info("[LlmProviderRegistry] Building EmbeddingModel - Provider: {}, BaseUrl: {}, Model: {}",
+            providerId, config.baseUrl(), config.embeddingModel());
+
+        OpenAiApi openAiApi = ApiPathResolver.buildOpenAiApi(config.baseUrl(), config.apiKey());
+        OpenAiEmbeddingOptions options = OpenAiEmbeddingOptions.builder()
+            .model(config.embeddingModel())
+            .build();
+
+        return new OpenAiEmbeddingModel(
+            openAiApi,
+            MetadataMode.EMBED,
+            options,
+            RetryUtils.DEFAULT_RETRY_TEMPLATE,
+            observationRegistry != null ? observationRegistry : ObservationRegistry.NOOP
         );
     }
 
@@ -254,6 +305,82 @@ public class LlmProviderRegistry {
 
     private String resolveProviderId(String providerId) {
         return (providerId != null && !providerId.isBlank())
-            ? providerId : properties.getDefaultProvider();
+            ? providerId : resolveDefaultChatProviderId();
+    }
+
+    private String resolveDefaultChatProviderId() {
+        if (globalSettingRepository == null) {
+            return properties.getDefaultProvider();
+        }
+        return globalSettingRepository.findById(LlmGlobalSettingEntity.SINGLETON_ID)
+            .map(LlmGlobalSettingEntity::getDefaultChatProviderId)
+            .filter(id -> !isBlank(id))
+            .orElse(properties.getDefaultProvider());
+    }
+
+    private String resolveDefaultEmbeddingProviderId() {
+        if (globalSettingRepository == null) {
+            return !isBlank(properties.getDefaultEmbeddingProvider())
+                ? properties.getDefaultEmbeddingProvider()
+                : properties.getDefaultProvider();
+        }
+        return globalSettingRepository.findById(LlmGlobalSettingEntity.SINGLETON_ID)
+            .map(LlmGlobalSettingEntity::getDefaultEmbeddingProviderId)
+            .filter(id -> !isBlank(id))
+            .orElseGet(() -> !isBlank(properties.getDefaultEmbeddingProvider())
+                ? properties.getDefaultEmbeddingProvider()
+                : properties.getDefaultProvider());
+    }
+
+    private ProviderSnapshot loadProviderOrThrow(String providerId) {
+        if (providerRepository == null) {
+            return loadProviderFromPropertiesOrThrow(providerId);
+        }
+        LlmProviderEntity entity = providerRepository.findById(providerId)
+            .filter(LlmProviderEntity::isEnabled)
+            .orElseThrow(() -> new IllegalArgumentException("Unknown LLM provider: " + providerId));
+        return new ProviderSnapshot(
+            entity.getId(),
+            entity.getBaseUrl(),
+            encryptionService.decrypt(entity.getApiKeyNonce(), entity.getApiKeyCiphertext()),
+            entity.getModel(),
+            entity.getEmbeddingModel(),
+            entity.isSupportsEmbedding(),
+            entity.getTemperature()
+        );
+    }
+
+    private ProviderSnapshot loadProviderFromPropertiesOrThrow(String providerId) {
+        ProviderConfig config = properties.getProviders().get(providerId);
+        if (config == null) {
+            log.error("[LlmProviderRegistry] Provider config not found: {}", providerId);
+            throw new IllegalArgumentException("Unknown LLM provider: " + providerId);
+        }
+        boolean supportsEmbedding = Boolean.TRUE.equals(config.getSupportsEmbedding())
+            || !isBlank(config.getEmbeddingModel());
+        return new ProviderSnapshot(
+            providerId,
+            config.getBaseUrl(),
+            config.getApiKey(),
+            config.getModel(),
+            config.getEmbeddingModel(),
+            supportsEmbedding,
+            config.getTemperature()
+        );
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.isBlank();
+    }
+
+    private record ProviderSnapshot(
+        String id,
+        String baseUrl,
+        String apiKey,
+        String model,
+        String embeddingModel,
+        boolean supportsEmbedding,
+        Double temperature
+    ) {
     }
 }

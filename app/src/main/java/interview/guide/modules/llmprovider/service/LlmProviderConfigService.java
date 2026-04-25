@@ -15,13 +15,19 @@ import interview.guide.modules.llmprovider.dto.ProviderTestResult;
 import interview.guide.modules.llmprovider.dto.TtsConfigDTO;
 import interview.guide.modules.llmprovider.dto.TtsConfigRequest;
 import interview.guide.modules.llmprovider.dto.UpdateProviderRequest;
+import interview.guide.modules.llmprovider.model.LlmGlobalSettingEntity;
+import interview.guide.modules.llmprovider.model.LlmProviderEntity;
+import interview.guide.modules.llmprovider.repository.LlmGlobalSettingRepository;
+import interview.guide.modules.llmprovider.repository.LlmProviderRepository;
 import interview.guide.modules.voiceinterview.config.VoiceInterviewProperties;
 import interview.guide.modules.voiceinterview.service.QwenAsrService;
 import interview.guide.modules.voiceinterview.service.QwenTtsService;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
 
@@ -49,6 +55,9 @@ public class LlmProviderConfigService {
 
   private final LlmProviderProperties properties;
   private final LlmProviderRegistry registry;
+  private final LlmProviderRepository providerRepository;
+  private final LlmGlobalSettingRepository globalSettingRepository;
+  private final ApiKeyEncryptionService encryptionService;
   private final String yamlPath;
   private final String envPath;
   private final ReentrantReadWriteLock rwLock = new ReentrantReadWriteLock();
@@ -56,19 +65,35 @@ public class LlmProviderConfigService {
   private final QwenAsrService asrService;
   private final QwenTtsService ttsService;
 
+  @Autowired
+  public LlmProviderConfigService(
+      LlmProviderProperties properties,
+      LlmProviderRegistry registry,
+      LlmProviderRepository providerRepository,
+      LlmGlobalSettingRepository globalSettingRepository,
+      ApiKeyEncryptionService encryptionService,
+      VoiceInterviewProperties voiceProperties,
+      QwenAsrService asrService,
+      QwenTtsService ttsService) {
+    this.properties = properties;
+    this.registry = registry;
+    this.providerRepository = providerRepository;
+    this.globalSettingRepository = globalSettingRepository;
+    this.encryptionService = encryptionService;
+    this.yamlPath = properties.getConfigYamlPath();
+    this.envPath = properties.getConfigEnvPath();
+    this.voiceProperties = voiceProperties;
+    this.asrService = asrService;
+    this.ttsService = ttsService;
+  }
+
   public LlmProviderConfigService(
       LlmProviderProperties properties,
       LlmProviderRegistry registry,
       VoiceInterviewProperties voiceProperties,
       QwenAsrService asrService,
       QwenTtsService ttsService) {
-    this.properties = properties;
-    this.registry = registry;
-    this.yamlPath = properties.getConfigYamlPath();
-    this.envPath = properties.getConfigEnvPath();
-    this.voiceProperties = voiceProperties;
-    this.asrService = asrService;
-    this.ttsService = ttsService;
+    this(properties, registry, null, null, null, voiceProperties, asrService, ttsService);
   }
 
   @PostConstruct
@@ -104,17 +129,36 @@ public class LlmProviderConfigService {
   public List<ProviderDTO> listProviders() {
     rwLock.readLock().lock();
     try {
-      Map<String, ProviderConfig> providers = properties.getProviders();
-      if (providers == null) return List.of();
-
-      return providers.entrySet().stream()
-          .map(e -> ProviderDTO.builder()
-              .id(e.getKey())
-              .baseUrl(e.getValue().getBaseUrl())
-              .maskedApiKey(maskApiKey(e.getValue().getApiKey()))
-              .model(e.getValue().getModel())
-              .embeddingModel(e.getValue().getEmbeddingModel())
-              .temperature(e.getValue().getTemperature())
+      if (!isDatabaseBacked()) {
+        Map<String, ProviderConfig> providers = properties.getProviders();
+        if (providers == null) return List.of();
+        return providers.entrySet().stream()
+            .map(e -> ProviderDTO.builder()
+                .id(e.getKey())
+                .baseUrl(e.getValue().getBaseUrl())
+                .maskedApiKey(maskApiKey(e.getValue().getApiKey()))
+                .model(e.getValue().getModel())
+                .embeddingModel(e.getValue().getEmbeddingModel())
+                .supportsEmbedding(Boolean.TRUE.equals(e.getValue().getSupportsEmbedding())
+                    || trimOrNull(e.getValue().getEmbeddingModel()) != null)
+                .temperature(e.getValue().getTemperature())
+                .defaultChatProvider(e.getKey().equals(properties.getDefaultProvider()))
+                .defaultEmbeddingProvider(e.getKey().equals(properties.getDefaultEmbeddingProvider()))
+                .build())
+            .toList();
+      }
+      LlmGlobalSettingEntity setting = getGlobalSettingOrThrow();
+      return providerRepository.findAll().stream()
+          .map(provider -> ProviderDTO.builder()
+              .id(provider.getId())
+              .baseUrl(provider.getBaseUrl())
+              .maskedApiKey(maskApiKey(decryptApiKey(provider)))
+              .model(provider.getModel())
+              .embeddingModel(provider.getEmbeddingModel())
+              .supportsEmbedding(provider.isSupportsEmbedding())
+              .temperature(provider.getTemperature())
+              .defaultChatProvider(provider.getId().equals(setting.getDefaultChatProviderId()))
+              .defaultEmbeddingProvider(provider.getId().equals(setting.getDefaultEmbeddingProviderId()))
               .build())
           .toList();
     } finally {
@@ -125,14 +169,33 @@ public class LlmProviderConfigService {
   public ProviderDTO getProvider(String id) {
     rwLock.readLock().lock();
     try {
-      ProviderConfig config = getProviderConfigOrThrow(id);
+      if (!isDatabaseBacked()) {
+        ProviderConfig config = getLegacyProviderConfigOrThrow(id);
+        return ProviderDTO.builder()
+            .id(id)
+            .baseUrl(config.getBaseUrl())
+            .maskedApiKey(maskApiKey(config.getApiKey()))
+            .model(config.getModel())
+            .embeddingModel(config.getEmbeddingModel())
+            .supportsEmbedding(Boolean.TRUE.equals(config.getSupportsEmbedding())
+                || trimOrNull(config.getEmbeddingModel()) != null)
+            .temperature(config.getTemperature())
+            .defaultChatProvider(id.equals(properties.getDefaultProvider()))
+            .defaultEmbeddingProvider(id.equals(properties.getDefaultEmbeddingProvider()))
+            .build();
+      }
+      LlmGlobalSettingEntity setting = getGlobalSettingOrThrow();
+      LlmProviderEntity provider = getProviderEntityOrThrow(id);
       return ProviderDTO.builder()
           .id(id)
-          .baseUrl(config.getBaseUrl())
-          .maskedApiKey(maskApiKey(config.getApiKey()))
-          .model(config.getModel())
-          .embeddingModel(config.getEmbeddingModel())
-          .temperature(config.getTemperature())
+          .baseUrl(provider.getBaseUrl())
+          .maskedApiKey(maskApiKey(decryptApiKey(provider)))
+          .model(provider.getModel())
+          .embeddingModel(provider.getEmbeddingModel())
+          .supportsEmbedding(provider.isSupportsEmbedding())
+          .temperature(provider.getTemperature())
+          .defaultChatProvider(id.equals(setting.getDefaultChatProviderId()))
+          .defaultEmbeddingProvider(id.equals(setting.getDefaultEmbeddingProviderId()))
           .build();
     } finally {
       rwLock.readLock().unlock();
@@ -142,7 +205,13 @@ public class LlmProviderConfigService {
   public DefaultProviderDTO getDefaultProvider() {
     rwLock.readLock().lock();
     try {
-      return new DefaultProviderDTO(properties.getDefaultProvider());
+      if (!isDatabaseBacked()) {
+        return new DefaultProviderDTO(properties.getDefaultProvider(), properties.getDefaultEmbeddingProvider());
+      }
+      LlmGlobalSettingEntity setting = getGlobalSettingOrThrow();
+      return new DefaultProviderDTO(
+          setting.getDefaultChatProviderId(),
+          setting.getDefaultEmbeddingProviderId());
     } finally {
       rwLock.readLock().unlock();
     }
@@ -192,7 +261,9 @@ public class LlmProviderConfigService {
   public ProviderTestResult testProvider(String id) {
     rwLock.readLock().lock();
     try {
-      ProviderConfig config = getProviderConfigOrThrow(id);
+      ProviderRuntimeConfig config = isDatabaseBacked()
+          ? getProviderRuntimeConfigOrThrow(id)
+          : toRuntimeConfig(getLegacyProviderConfigOrThrow(id));
       return doTestProvider(config, id);
     } finally {
       rwLock.readLock().unlock();
@@ -230,37 +301,60 @@ public class LlmProviderConfigService {
 
   // ===== Write operations (write lock) =====
 
+  @Transactional
   public void createProvider(CreateProviderRequest request) {
     rwLock.writeLock().lock();
     try {
-      Map<String, ProviderConfig> providers = getProvidersOrThrow();
-      if (providers.containsKey(request.id())) {
+      if (!isDatabaseBacked()) {
+        createProviderLegacy(request);
+        return;
+      }
+      String providerId = trimOrNull(request.id());
+      if (providerRepository.existsById(providerId)) {
         throw new BusinessException(ErrorCode.PROVIDER_ALREADY_EXISTS,
             "Provider '" + request.id() + "' 已存在");
       }
+      String baseUrl = requireNonBlank(request.baseUrl(), "baseUrl");
+      String model = requireNonBlank(request.model(), "model");
+      String apiKey = requireNonBlank(request.apiKey(), "apiKey");
+      String embeddingModel = trimOrNull(request.embeddingModel());
+      boolean supportsEmbedding = request.supportsEmbedding() != null
+          ? request.supportsEmbedding()
+          : embeddingModel != null;
+      if (supportsEmbedding && embeddingModel == null) {
+        throw new BusinessException(ErrorCode.BAD_REQUEST,
+            "支持 Embedding 的 Provider 必须填写 embeddingModel");
+      }
 
-      ProviderConfig config = new ProviderConfig();
-      config.setBaseUrl(request.baseUrl());
-      config.setApiKey(request.apiKey());
-      config.setModel(request.model());
-      config.setEmbeddingModel(request.embeddingModel());
-      config.setTemperature(request.temperature());
-      providers.put(request.id(), config);
-
-      String envKey = toEnvKey(request.id());
-      writeProviderToYaml(request.id(), config, envKey);
-      writeEnvValue(envKey, request.apiKey());
+      ApiKeyEncryptionService.EncryptedValue encrypted = encryptionService.encrypt(apiKey);
+      providerRepository.save(LlmProviderEntity.builder()
+          .id(providerId)
+          .baseUrl(baseUrl)
+          .apiKeyNonce(encrypted.nonce())
+          .apiKeyCiphertext(encrypted.ciphertext())
+          .model(model)
+          .embeddingModel(embeddingModel)
+          .supportsEmbedding(supportsEmbedding)
+          .temperature(request.temperature())
+          .enabled(true)
+          .builtin(false)
+          .build());
       registry.reload();
-      log.info("Created provider: id={}, baseUrl={}, model={}", request.id(), request.baseUrl(), request.model());
+      log.info("Created provider: id={}, baseUrl={}, model={}", providerId, baseUrl, model);
     } finally {
       rwLock.writeLock().unlock();
     }
   }
 
+  @Transactional
   public void updateProvider(String id, UpdateProviderRequest request) {
     rwLock.writeLock().lock();
     try {
-      ProviderConfig config = getProviderConfigOrThrow(id);
+      if (!isDatabaseBacked()) {
+        updateProviderLegacy(id, request);
+        return;
+      }
+      LlmProviderEntity provider = getProviderEntityOrThrow(id);
 
       String trimmedBaseUrl = trimOrNull(request.baseUrl());
       if (request.baseUrl() != null && trimmedBaseUrl == null) {
@@ -275,22 +369,28 @@ public class LlmProviderConfigService {
         throw new BusinessException(ErrorCode.BAD_REQUEST, "apiKey 不能为空字符串");
       }
 
-      if (trimmedBaseUrl != null) config.setBaseUrl(trimmedBaseUrl);
-      if (trimmedModel != null) config.setModel(trimmedModel);
+      if (trimmedBaseUrl != null) provider.setBaseUrl(trimmedBaseUrl);
+      if (trimmedModel != null) provider.setModel(trimmedModel);
       if (request.embeddingModel() != null) {
-        config.setEmbeddingModel(trimOrNull(request.embeddingModel()));
+        provider.setEmbeddingModel(trimOrNull(request.embeddingModel()));
+      }
+      if (request.supportsEmbedding() != null) {
+        provider.setSupportsEmbedding(request.supportsEmbedding());
+      }
+      if (provider.isSupportsEmbedding() && trimOrNull(provider.getEmbeddingModel()) == null) {
+        throw new BusinessException(ErrorCode.BAD_REQUEST,
+            "支持 Embedding 的 Provider 必须填写 embeddingModel");
       }
       if (request.temperature() != null) {
-        config.setTemperature(request.temperature());
+        provider.setTemperature(request.temperature());
       }
       if (trimmedApiKey != null) {
-        config.setApiKey(trimmedApiKey);
-        String envKey = toEnvKey(id);
-        updateEnvValue(envKey, trimmedApiKey);
+        ApiKeyEncryptionService.EncryptedValue encrypted = encryptionService.encrypt(trimmedApiKey);
+        provider.setApiKeyNonce(encrypted.nonce());
+        provider.setApiKeyCiphertext(encrypted.ciphertext());
       }
 
-      String envKey = toEnvKey(id);
-      writeProviderToYaml(id, config, envKey);
+      providerRepository.save(provider);
       registry.reload();
       log.info("Updated provider: id={}", id);
     } finally {
@@ -298,19 +398,22 @@ public class LlmProviderConfigService {
     }
   }
 
+  @Transactional
   public void deleteProvider(String id) {
     rwLock.writeLock().lock();
     try {
-      if (id.equals(properties.getDefaultProvider())) {
+      if (!isDatabaseBacked()) {
+        deleteProviderLegacy(id);
+        return;
+      }
+      LlmGlobalSettingEntity setting = getGlobalSettingOrThrow();
+      if (id.equals(setting.getDefaultChatProviderId()) || id.equals(setting.getDefaultEmbeddingProviderId())) {
         throw new BusinessException(ErrorCode.PROVIDER_DEFAULT_CANNOT_DELETE,
             "默认 Provider '" + id + "' 不可删除，请先切换默认 Provider");
       }
-      getProviderConfigOrThrow(id);
-      getProvidersOrThrow().remove(id);
+      getProviderEntityOrThrow(id);
 
-      String envKey = toEnvKey(id);
-      removeProviderFromYaml(id);
-      removeFromEnv(envKey);
+      providerRepository.deleteById(id);
       registry.reload();
       log.info("Deleted provider: id={}", id);
     } finally {
@@ -318,18 +421,47 @@ public class LlmProviderConfigService {
     }
   }
 
+  @Transactional
   public void updateDefaultProvider(DefaultProviderDTO request) {
     rwLock.writeLock().lock();
     try {
+      if (!isDatabaseBacked()) {
+        updateDefaultProviderLegacy(request);
+        return;
+      }
       String providerId = trimOrNull(request.defaultProvider());
       if (providerId == null) {
         throw new BusinessException(ErrorCode.BAD_REQUEST, "defaultProvider 不能为空");
       }
-      getProviderConfigOrThrow(providerId);
-      properties.setDefaultProvider(providerId);
-      writeDefaultProviderToYaml(providerId);
+      getProviderEntityOrThrow(providerId);
+      LlmGlobalSettingEntity setting = getGlobalSettingOrThrow();
+      setting.setDefaultChatProviderId(providerId);
+      globalSettingRepository.save(setting);
       registry.reload();
       log.info("Updated default provider: {}", providerId);
+    } finally {
+      rwLock.writeLock().unlock();
+    }
+  }
+
+  @Transactional
+  public void updateDefaultEmbeddingProvider(DefaultProviderDTO request) {
+    rwLock.writeLock().lock();
+    try {
+      String providerId = trimOrNull(request.defaultEmbeddingProvider());
+      if (providerId == null) {
+        throw new BusinessException(ErrorCode.BAD_REQUEST, "defaultEmbeddingProvider 不能为空");
+      }
+      LlmProviderEntity provider = getProviderEntityOrThrow(providerId);
+      if (!provider.isSupportsEmbedding() || trimOrNull(provider.getEmbeddingModel()) == null) {
+        throw new BusinessException(ErrorCode.BAD_REQUEST,
+            "Provider '" + providerId + "' 不支持 Embedding，不能设为默认向量服务");
+      }
+      LlmGlobalSettingEntity setting = getGlobalSettingOrThrow();
+      setting.setDefaultEmbeddingProviderId(providerId);
+      globalSettingRepository.save(setting);
+      registry.reload();
+      log.info("Updated default embedding provider: {}", providerId);
     } finally {
       rwLock.writeLock().unlock();
     }
@@ -393,7 +525,11 @@ public class LlmProviderConfigService {
 
   // ===== Internal helpers =====
 
-  private Map<String, ProviderConfig> getProvidersOrThrow() {
+  private boolean isDatabaseBacked() {
+    return providerRepository != null && globalSettingRepository != null && encryptionService != null;
+  }
+
+  private Map<String, ProviderConfig> getLegacyProvidersOrThrow() {
     Map<String, ProviderConfig> providers = properties.getProviders();
     if (providers == null) {
       throw new BusinessException(ErrorCode.PROVIDER_CONFIG_READ_FAILED,
@@ -402,14 +538,133 @@ public class LlmProviderConfigService {
     return providers;
   }
 
-  ProviderConfig getProviderConfigOrThrow(String id) {
-    Map<String, ProviderConfig> providers = getProvidersOrThrow();
-    ProviderConfig config = providers.get(id);
+  ProviderConfig getLegacyProviderConfigOrThrow(String id) {
+    ProviderConfig config = getLegacyProvidersOrThrow().get(id);
     if (config == null) {
       throw new BusinessException(ErrorCode.PROVIDER_NOT_FOUND,
           "Provider '" + id + "' 不存在");
     }
     return config;
+  }
+
+  private void createProviderLegacy(CreateProviderRequest request) {
+    Map<String, ProviderConfig> providers = getLegacyProvidersOrThrow();
+    if (providers.containsKey(request.id())) {
+      throw new BusinessException(ErrorCode.PROVIDER_ALREADY_EXISTS,
+          "Provider '" + request.id() + "' 已存在");
+    }
+
+    ProviderConfig config = new ProviderConfig();
+    config.setBaseUrl(request.baseUrl());
+    config.setApiKey(request.apiKey());
+    config.setModel(request.model());
+    config.setEmbeddingModel(request.embeddingModel());
+    config.setSupportsEmbedding(request.supportsEmbedding());
+    config.setTemperature(request.temperature());
+    providers.put(request.id(), config);
+
+    String envKey = toEnvKey(request.id());
+    writeProviderToYaml(request.id(), config, envKey);
+    writeEnvValue(envKey, request.apiKey());
+    registry.reload();
+  }
+
+  private void updateProviderLegacy(String id, UpdateProviderRequest request) {
+    ProviderConfig config = getLegacyProviderConfigOrThrow(id);
+    String trimmedBaseUrl = trimOrNull(request.baseUrl());
+    if (request.baseUrl() != null && trimmedBaseUrl == null) {
+      throw new BusinessException(ErrorCode.BAD_REQUEST, "baseUrl 不能为空字符串");
+    }
+    String trimmedModel = trimOrNull(request.model());
+    if (request.model() != null && trimmedModel == null) {
+      throw new BusinessException(ErrorCode.BAD_REQUEST, "model 不能为空字符串");
+    }
+    String trimmedApiKey = trimOrNull(request.apiKey());
+    if (request.apiKey() != null && trimmedApiKey == null) {
+      throw new BusinessException(ErrorCode.BAD_REQUEST, "apiKey 不能为空字符串");
+    }
+
+    if (trimmedBaseUrl != null) config.setBaseUrl(trimmedBaseUrl);
+    if (trimmedModel != null) config.setModel(trimmedModel);
+    if (request.embeddingModel() != null) {
+      config.setEmbeddingModel(trimOrNull(request.embeddingModel()));
+    }
+    if (request.supportsEmbedding() != null) {
+      config.setSupportsEmbedding(request.supportsEmbedding());
+    }
+    if (request.temperature() != null) {
+      config.setTemperature(request.temperature());
+    }
+    if (trimmedApiKey != null) {
+      config.setApiKey(trimmedApiKey);
+      updateEnvValue(toEnvKey(id), trimmedApiKey);
+    }
+
+    writeProviderToYaml(id, config, toEnvKey(id));
+    registry.reload();
+  }
+
+  private void deleteProviderLegacy(String id) {
+    if (id.equals(properties.getDefaultProvider())) {
+      throw new BusinessException(ErrorCode.PROVIDER_DEFAULT_CANNOT_DELETE,
+          "默认 Provider '" + id + "' 不可删除，请先切换默认 Provider");
+    }
+    getLegacyProviderConfigOrThrow(id);
+    getLegacyProvidersOrThrow().remove(id);
+    String envKey = toEnvKey(id);
+    removeProviderFromYaml(id);
+    removeFromEnv(envKey);
+    registry.reload();
+  }
+
+  private void updateDefaultProviderLegacy(DefaultProviderDTO request) {
+    String providerId = trimOrNull(request.defaultProvider());
+    if (providerId == null) {
+      throw new BusinessException(ErrorCode.BAD_REQUEST, "defaultProvider 不能为空");
+    }
+    getLegacyProviderConfigOrThrow(providerId);
+    properties.setDefaultProvider(providerId);
+    writeDefaultProviderToYaml(providerId);
+    registry.reload();
+  }
+
+  private ProviderRuntimeConfig toRuntimeConfig(ProviderConfig config) {
+    return new ProviderRuntimeConfig(
+        config.getBaseUrl(),
+        config.getApiKey(),
+        config.getModel(),
+        config.getEmbeddingModel(),
+        Boolean.TRUE.equals(config.getSupportsEmbedding()) || trimOrNull(config.getEmbeddingModel()) != null,
+        config.getTemperature()
+    );
+  }
+
+  LlmProviderEntity getProviderEntityOrThrow(String id) {
+    return providerRepository.findById(id)
+        .orElseThrow(() -> new BusinessException(ErrorCode.PROVIDER_NOT_FOUND,
+            "Provider '" + id + "' 不存在"));
+  }
+
+  private LlmGlobalSettingEntity getGlobalSettingOrThrow() {
+    return globalSettingRepository.findById(LlmGlobalSettingEntity.SINGLETON_ID)
+        .orElseThrow(() -> new BusinessException(ErrorCode.PROVIDER_CONFIG_READ_FAILED,
+            "默认 Provider 配置未初始化"));
+  }
+
+  private ProviderRuntimeConfig getProviderRuntimeConfigOrThrow(String id) {
+    LlmProviderEntity provider = getProviderEntityOrThrow(id);
+    return new ProviderRuntimeConfig(
+        provider.getBaseUrl(),
+        decryptApiKey(provider),
+        provider.getModel(),
+        provider.getEmbeddingModel(),
+        provider.isSupportsEmbedding(),
+        provider.getTemperature()
+    );
+  }
+
+  private String decryptApiKey(LlmProviderEntity provider) {
+    return encryptionService.decrypt(provider.getApiKeyNonce(), provider.getApiKeyCiphertext());
   }
 
   String maskApiKey(String apiKey) {
@@ -461,26 +716,34 @@ public class LlmProviderConfigService {
     return normalized.isEmpty() ? null : normalized;
   }
 
+  private String requireNonBlank(String value, String fieldName) {
+    String normalized = trimOrNull(value);
+    if (normalized == null) {
+      throw new BusinessException(ErrorCode.BAD_REQUEST, fieldName + " 不能为空");
+    }
+    return normalized;
+  }
+
   private String toEnvKey(String providerId) {
     return "PROVIDER_" + providerId.toUpperCase().replace("-", "_") + "_API_KEY";
   }
 
   // ===== Provider test logic (called under read lock) =====
 
-  private ProviderTestResult doTestProvider(ProviderConfig config, String id) {
+  private ProviderTestResult doTestProvider(ProviderRuntimeConfig config, String id) {
     try {
       SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
       requestFactory.setConnectTimeout(5000);
       requestFactory.setReadTimeout(10000);
 
       RestClient restClient = RestClient.builder()
-          .defaultHeader("Authorization", "Bearer " + config.getApiKey())
+          .defaultHeader("Authorization", "Bearer " + config.apiKey())
           .requestFactory(requestFactory)
           .build();
 
-      Map<String, Object> requestBody = buildConnectivityTestRequestBody(config.getModel());
+      Map<String, Object> requestBody = buildConnectivityTestRequestBody(config.model());
 
-      List<String> candidateUrls = buildConnectivityTestUrls(config.getBaseUrl());
+      List<String> candidateUrls = buildConnectivityTestUrls(config.baseUrl());
       String lastFailureMessage = "Unknown error";
 
       for (String targetUrl : candidateUrls) {
@@ -491,11 +754,11 @@ public class LlmProviderConfigService {
               .retrieve()
               .toEntity(String.class);
           log.info("Provider connectivity test succeeded: providerId={}, baseUrl={}, targetUrl={}, model={}",
-              id, config.getBaseUrl(), targetUrl, config.getModel());
+              id, config.baseUrl(), targetUrl, config.model());
           return ProviderTestResult.builder()
               .success(true)
               .message("连接成功")
-              .model(config.getModel())
+              .model(config.model())
               .build();
         } catch (RestClientResponseException e) {
           String responseBody = abbreviate(e.getResponseBodyAsString());
@@ -508,9 +771,9 @@ public class LlmProviderConfigService {
           log.warn(
               "Provider connectivity test failed with response: providerId={}, baseUrl={}, targetUrl={}, model={}, status={}, body={}",
               id,
-              config.getBaseUrl(),
+              config.baseUrl(),
               targetUrl,
-              config.getModel(),
+              config.model(),
               e.getStatusCode().value(),
               responseBody,
               e
@@ -525,9 +788,9 @@ public class LlmProviderConfigService {
           log.warn(
               "Provider connectivity test failed: providerId={}, baseUrl={}, targetUrl={}, model={}, error={}",
               id,
-              config.getBaseUrl(),
+              config.baseUrl(),
               targetUrl,
-              config.getModel(),
+              config.model(),
               e.getMessage(),
               e
           );
@@ -536,15 +799,15 @@ public class LlmProviderConfigService {
       return ProviderTestResult.builder()
           .success(false)
           .message("连接失败: " + lastFailureMessage)
-          .model(config.getModel())
+          .model(config.model())
           .build();
     } catch (Exception e) {
       log.warn("Provider connectivity test setup failed: providerId={}, baseUrl={}, model={}, error={}",
-          id, config.getBaseUrl(), config.getModel(), e.getMessage(), e);
+          id, config.baseUrl(), config.model(), e.getMessage(), e);
       return ProviderTestResult.builder()
           .success(false)
           .message("连接失败: " + e.getMessage())
-          .model(config.getModel())
+          .model(config.model())
           .build();
     }
   }
@@ -833,5 +1096,15 @@ public class LlmProviderConfigService {
       if (value instanceof Number n) return n.toString();
       return value.toString();
     }
+  }
+
+  private record ProviderRuntimeConfig(
+      String baseUrl,
+      String apiKey,
+      String model,
+      String embeddingModel,
+      boolean supportsEmbedding,
+      Double temperature
+  ) {
   }
 }

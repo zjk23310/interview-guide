@@ -9,5 +9,8 @@ public record ProviderDTO(
     String maskedApiKey,
     String model,
     String embeddingModel,
-    Double temperature
+    boolean supportsEmbedding,
+    Double temperature,
+    boolean defaultChatProvider,
+    boolean defaultEmbeddingProvider
 ) {}

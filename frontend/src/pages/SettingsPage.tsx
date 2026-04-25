@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Settings, Plus, Trash2, Plug, CheckCircle, XCircle,
-  Loader2, Eye, EyeOff, RefreshCw, Server, Edit2, Mic, Volume2, ChevronDown,
+  Loader2, Eye, EyeOff, RefreshCw, Server, Edit2, Mic, Volume2, ChevronDown, Database,
 } from 'lucide-react';
 import { llmProviderApi } from '../api/llmProvider';
 import ConfirmDialog from '../components/ConfirmDialog';
@@ -17,6 +17,7 @@ const PROVIDER_PRESETS: Record<string, {
   baseUrl: string;
   models: { value: string; label: string }[];
   embeddingModels?: { value: string; label: string }[];
+  supportsEmbedding: boolean;
 }> = {
   dashscope: {
     baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
@@ -33,6 +34,7 @@ const PROVIDER_PRESETS: Record<string, {
     embeddingModels: [
       { value: 'text-embedding-v3', label: 'text-embedding-v3 — 推荐' },
     ],
+    supportsEmbedding: true,
   },
   deepseek: {
     baseUrl: 'https://api.deepseek.com',
@@ -42,6 +44,7 @@ const PROVIDER_PRESETS: Record<string, {
       { value: 'deepseek-chat', label: 'DeepSeek V3.2 — 旧版对话（即将弃用）' },
       { value: 'deepseek-reasoner', label: 'DeepSeek R1 — 旧版推理（即将弃用）' },
     ],
+    supportsEmbedding: false,
   },
   glm: {
     baseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4',
@@ -58,6 +61,7 @@ const PROVIDER_PRESETS: Record<string, {
     embeddingModels: [
       { value: 'embedding-3', label: 'embedding-3 — 推荐' },
     ],
+    supportsEmbedding: true,
   },
   kimi: {
     baseUrl: 'https://api.moonshot.cn/v1',
@@ -68,6 +72,7 @@ const PROVIDER_PRESETS: Record<string, {
       { value: 'kimi-k2-thinking', label: 'Kimi K2 Thinking — 深度推理' },
       { value: 'kimi-latest', label: 'kimi-latest — 自动最新' },
     ],
+    supportsEmbedding: false,
   },
 };
 
@@ -132,6 +137,7 @@ function ConfigRow({ label, value, title, monospace = false, emphasis = false }:
 export default function SettingsPage() {
   const [providers, setProviders] = useState<ProviderItem[]>([]);
   const [defaultProviderId, setDefaultProviderId] = useState('');
+  const [defaultEmbeddingProviderId, setDefaultEmbeddingProviderId] = useState('');
   const [loading, setLoading] = useState(true);
 
   // Modal state
@@ -145,6 +151,7 @@ export default function SettingsPage() {
   const [formApiKey, setFormApiKey] = useState('');
   const [formModel, setFormModel] = useState('');
   const [formEmbeddingModel, setFormEmbeddingModel] = useState('');
+  const [formSupportsEmbedding, setFormSupportsEmbedding] = useState(false);
   const [formTemperature, setFormTemperature] = useState('');
   const [showApiKey, setShowApiKey] = useState(false);
   const [showModelDropdown, setShowModelDropdown] = useState(false);
@@ -164,7 +171,9 @@ export default function SettingsPage() {
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [pendingDefaultProviderId, setPendingDefaultProviderId] = useState<string | null>(null);
+  const [pendingDefaultEmbeddingProviderId, setPendingDefaultEmbeddingProviderId] = useState<string | null>(null);
   const [settingDefault, setSettingDefault] = useState(false);
+  const [settingEmbeddingDefault, setSettingEmbeddingDefault] = useState(false);
 
   // Voice config state
   const [asrConfig, setAsrConfig] = useState<AsrConfig | null>(null);
@@ -190,6 +199,10 @@ export default function SettingsPage() {
     defaultProviderId === providerId
   ), [defaultProviderId]);
 
+  const isDefaultEmbeddingProvider = useCallback((providerId: string) => (
+    defaultEmbeddingProviderId === providerId
+  ), [defaultEmbeddingProviderId]);
+
   const loadData = useCallback(async () => {
     try {
       const [providerList, defaultProvider, asr, tts] = await Promise.all([
@@ -200,6 +213,7 @@ export default function SettingsPage() {
       ]);
       setProviders(providerList);
       setDefaultProviderId(defaultProvider.defaultProvider);
+      setDefaultEmbeddingProviderId(defaultProvider.defaultEmbeddingProvider);
       setAsrConfig(asr);
       setTtsConfig(tts);
     } catch (err) {
@@ -222,6 +236,7 @@ export default function SettingsPage() {
     setFormApiKey('');
     setFormModel('');
     setFormEmbeddingModel('');
+    setFormSupportsEmbedding(false);
     setShowApiKey(false);
     setShowModal(true);
   };
@@ -233,6 +248,7 @@ export default function SettingsPage() {
     setFormApiKey('');
     setFormModel(provider.model);
     setFormEmbeddingModel(provider.embeddingModel || '');
+    setFormSupportsEmbedding(provider.supportsEmbedding);
     setFormTemperature(provider.temperature != null ? String(provider.temperature) : '');
     setShowApiKey(false);
     setShowModal(true);
@@ -249,6 +265,10 @@ export default function SettingsPage() {
       showToast('请填写必填字段', 'error');
       return;
     }
+    if (formSupportsEmbedding && !formEmbeddingModel.trim()) {
+      showToast('支持向量化时需要填写 Embedding Model', 'error');
+      return;
+    }
     setSaving(true);
     try {
       const data: CreateProviderRequest = {
@@ -256,6 +276,7 @@ export default function SettingsPage() {
         baseUrl: formBaseUrl.trim(),
         apiKey: formApiKey.trim(),
         model: formModel.trim(),
+        supportsEmbedding: formSupportsEmbedding,
       };
       if (formEmbeddingModel.trim()) {
         data.embeddingModel = formEmbeddingModel.trim();
@@ -282,12 +303,17 @@ export default function SettingsPage() {
       showToast('请填写必填字段', 'error');
       return;
     }
+    if (formSupportsEmbedding && !formEmbeddingModel.trim()) {
+      showToast('支持向量化时需要填写 Embedding Model', 'error');
+      return;
+    }
     setSaving(true);
     try {
       const data: UpdateProviderRequest = {
         baseUrl: formBaseUrl.trim(),
         model: formModel.trim(),
         embeddingModel: formEmbeddingModel.trim(),
+        supportsEmbedding: formSupportsEmbedding,
       };
       if (formApiKey.trim()) {
         data.apiKey = formApiKey.trim();
@@ -359,7 +385,10 @@ export default function SettingsPage() {
     }
     setSettingDefault(true);
     try {
-      await llmProviderApi.updateDefaultProvider({ defaultProvider: pendingDefaultProviderId });
+      await llmProviderApi.updateDefaultProvider({
+        defaultProvider: pendingDefaultProviderId,
+        defaultEmbeddingProvider: defaultEmbeddingProviderId,
+      });
       showToast(`已将 "${pendingDefaultProviderId}" 设为默认文字服务`);
       setPendingDefaultProviderId(null);
       await loadData();
@@ -368,6 +397,35 @@ export default function SettingsPage() {
       showToast(err instanceof Error ? err.message : '设置默认 Provider 失败', 'error');
     } finally {
       setSettingDefault(false);
+    }
+  };
+
+  const handleSetEmbeddingDefault = async (provider: ProviderItem) => {
+    if (!provider.supportsEmbedding || !provider.embeddingModel) {
+      showToast('该 Provider 不支持 Embedding，不能作为知识库向量服务', 'error');
+      return;
+    }
+    setPendingDefaultEmbeddingProviderId(provider.id);
+  };
+
+  const handleConfirmSetEmbeddingDefault = async () => {
+    if (!pendingDefaultEmbeddingProviderId) {
+      return;
+    }
+    setSettingEmbeddingDefault(true);
+    try {
+      await llmProviderApi.updateDefaultEmbeddingProvider({
+        defaultProvider: defaultProviderId,
+        defaultEmbeddingProvider: pendingDefaultEmbeddingProviderId,
+      });
+      showToast(`已将 "${pendingDefaultEmbeddingProviderId}" 设为默认向量服务`);
+      setPendingDefaultEmbeddingProviderId(null);
+      await loadData();
+    } catch (err) {
+      console.error('Failed to set embedding default:', err);
+      showToast(err instanceof Error ? err.message : '设置默认向量 Provider 失败', 'error');
+    } finally {
+      setSettingEmbeddingDefault(false);
     }
   };
 
@@ -514,6 +572,8 @@ export default function SettingsPage() {
                 <div className="grid grid-cols-1 items-stretch gap-4 md:grid-cols-2">
                   {providers.map((provider, index) => {
                     const isGlobalDefault = isGlobalDefaultProvider(provider.id);
+                    const isEmbeddingDefault = isDefaultEmbeddingProvider(provider.id);
+                    const canUseEmbedding = provider.supportsEmbedding && !!provider.embeddingModel;
 
                     return (
                     <motion.div
@@ -536,21 +596,27 @@ export default function SettingsPage() {
                             <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">文字模型 Provider</p>
                           </div>
                         </div>
-                        {isGlobalDefault && (
-                          <StatusBadge icon={<Plug className="h-3 w-3" />}>全局默认</StatusBadge>
-                        )}
+                        <div className="flex flex-col items-end gap-1">
+                          {isGlobalDefault && (
+                            <StatusBadge icon={<Plug className="h-3 w-3" />}>文字默认</StatusBadge>
+                          )}
+                          {isEmbeddingDefault && (
+                            <StatusBadge icon={<Database className="h-3 w-3" />}>向量默认</StatusBadge>
+                          )}
+                        </div>
                       </div>
 
                       {/* Card details */}
                       <dl className={DETAILS_CLASS}>
                         <ConfigRow label="Base URL" value={provider.baseUrl} title={provider.baseUrl} emphasis />
                         <ConfigRow label="模型" value={provider.model} title={provider.model} emphasis />
+                        <ConfigRow
+                          label="向量能力"
+                          value={canUseEmbedding ? '支持' : '不支持'}
+                          title={canUseEmbedding ? provider.embeddingModel ?? '' : '不能用于知识库向量化'}
+                        />
                         {provider.embeddingModel && (
-                          <ConfigRow
-                            label="向量模型"
-                            value={provider.embeddingModel}
-                            title={provider.embeddingModel}
-                          />
+                          <ConfigRow label="向量模型" value={provider.embeddingModel} title={provider.embeddingModel} />
                         )}
                         {provider.temperature != null && (
                           <ConfigRow label="温度" value={provider.temperature} />
@@ -615,6 +681,15 @@ export default function SettingsPage() {
                         >
                           <Plug className="w-3.5 h-3.5" />
                           设为默认
+                        </button>
+                        <button
+                          onClick={() => handleSetEmbeddingDefault(provider)}
+                          disabled={!canUseEmbedding || isEmbeddingDefault || settingEmbeddingDefault}
+                          className={`${ACTION_BUTTON_CLASS} text-emerald-600 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-900/20 disabled:hover:bg-transparent dark:disabled:hover:bg-transparent`}
+                          title={canUseEmbedding ? '设为默认向量服务' : '该 Provider 不支持 Embedding'}
+                        >
+                          <Database className="w-3.5 h-3.5" />
+                          设为向量
                         </button>
                         <button
                           onClick={() => setDeleteConfirmId(provider.id)}
@@ -805,6 +880,8 @@ export default function SettingsPage() {
                           const preset = PROVIDER_PRESETS[newId.toLowerCase()];
                           if (preset) {
                             setFormBaseUrl(preset.baseUrl);
+                            setFormSupportsEmbedding(preset.supportsEmbedding);
+                            setFormEmbeddingModel(preset.embeddingModels?.[0]?.value ?? '');
                           }
                         }
                       }}
@@ -926,9 +1003,25 @@ export default function SettingsPage() {
 
                   {/* Embedding Model */}
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
-                      Embedding Model <span className="text-slate-400 font-normal">(可选)</span>
-                    </label>
+                    <div className="mb-1.5 flex items-center justify-between gap-3">
+                      <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+                        Embedding Model <span className="text-slate-400 font-normal">(知识库向量化)</span>
+                      </label>
+                      <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-600 dark:text-slate-300">
+                        <input
+                          type="checkbox"
+                          checked={formSupportsEmbedding}
+                          onChange={(e) => {
+                            setFormSupportsEmbedding(e.target.checked);
+                            if (!e.target.checked) {
+                              setFormEmbeddingModel('');
+                            }
+                          }}
+                          className="h-4 w-4 rounded border-slate-300 text-primary-600 focus:ring-primary-500"
+                        />
+                        支持 Embedding
+                      </label>
+                    </div>
                     <div className="relative">
                       <input
                         type="text"
@@ -937,15 +1030,19 @@ export default function SettingsPage() {
                           setFormEmbeddingModel(e.target.value);
                           setShowEmbeddingDropdown(false);
                         }}
-                        onFocus={() => currentPreset?.embeddingModels && setShowEmbeddingDropdown(true)}
+                        onFocus={() => formSupportsEmbedding && currentPreset?.embeddingModels && setShowEmbeddingDropdown(true)}
                         onBlur={() => setTimeout(() => setShowEmbeddingDropdown(false), 150)}
-                        placeholder={currentPreset?.embeddingModels ? '从下拉列表选择或输入自定义模型名' : '例如: text-embedding-v3'}
+                        disabled={!formSupportsEmbedding}
+                        placeholder={formSupportsEmbedding
+                          ? (currentPreset?.embeddingModels ? '从下拉列表选择或输入自定义模型名' : '例如: text-embedding-v3')
+                          : 'DeepSeek / Kimi 等 Provider 通常不支持 Embedding'}
                         className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-600
                           bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white
                           placeholder:text-slate-400 focus:outline-none focus:ring-2
-                          focus:ring-primary-500/50 focus:border-primary-400 transition-shadow"
+                          focus:ring-primary-500/50 focus:border-primary-400 transition-shadow
+                          disabled:cursor-not-allowed disabled:opacity-60"
                       />
-                      {currentPreset?.embeddingModels && (
+                      {formSupportsEmbedding && currentPreset?.embeddingModels && (
                         <button
                           type="button"
                           onClick={() => setShowEmbeddingDropdown(!showEmbeddingDropdown)}
@@ -955,7 +1052,7 @@ export default function SettingsPage() {
                           <ChevronDown className="w-4 h-4" />
                         </button>
                       )}
-                      {showEmbeddingDropdown && currentPreset?.embeddingModels && (
+                      {formSupportsEmbedding && showEmbeddingDropdown && currentPreset?.embeddingModels && (
                         <div className="absolute z-10 mt-1 w-full bg-white dark:bg-slate-700
                           border border-slate-200 dark:border-slate-600 rounded-xl shadow-lg
                           max-h-60 overflow-auto">
@@ -1243,6 +1340,21 @@ export default function SettingsPage() {
         onCancel={() => {
           if (!settingDefault) {
             setPendingDefaultProviderId(null);
+          }
+        }}
+      />
+
+      <ConfirmDialog
+        open={pendingDefaultEmbeddingProviderId !== null}
+        title="设为默认向量服务"
+        message={`确定要将 "${pendingDefaultEmbeddingProviderId ?? ''}" 设为知识库默认向量服务吗？后续上传和重新向量化会使用该 Provider。`}
+        confirmText="确认设置"
+        cancelText="取消"
+        loading={settingEmbeddingDefault}
+        onConfirm={handleConfirmSetEmbeddingDefault}
+        onCancel={() => {
+          if (!settingEmbeddingDefault) {
+            setPendingDefaultEmbeddingProviderId(null);
           }
         }}
       />

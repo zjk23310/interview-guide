@@ -130,7 +130,7 @@ public class InterviewQuestionService {
         SkillDTO skill = resolveSkill(skillId, customCategories, jdText);
         String difficultyDesc = resolveDifficulty(difficulty);
         ChatClient questionChatClient =
-            llmProviderRegistry.getQuestionGenerationChatClient(llmProvider);
+            llmProviderRegistry.getPlainChatClient(llmProvider);
 
         boolean hasResume = resumeText != null && !resumeText.isBlank();
         String historicalSection = buildHistoricalSection(historicalQuestions);
@@ -188,7 +188,7 @@ public class InterviewQuestionService {
     }
 
     private List<InterviewQuestionDTO> generateResumeQuestions(
-            ChatClient plainClient, String resumeText, int questionCount,
+            ChatClient questionClient, String resumeText, int questionCount,
             SkillDTO skill, String difficultyDesc, String historicalSection) {
         try {
             Map<String, Object> variables = new HashMap<>();
@@ -200,11 +200,13 @@ public class InterviewQuestionService {
             variables.put("resumeText", resumeText);
             variables.put("historicalSection", historicalSection);
 
-            String systemPrompt = resumeSystemPromptTemplate.render() + "\n\n" + outputConverter.getFormat();
+            String systemPrompt = resumeSystemPromptTemplate.render()
+                + buildSkillPersonaSection(skill)
+                + "\n\n" + outputConverter.getFormat();
             String userPrompt = resumeUserPromptTemplate.render(variables);
 
             QuestionListDTO dto = structuredOutputInvoker.invoke(
-                plainClient, systemPrompt, userPrompt, outputConverter,
+                questionClient, systemPrompt, userPrompt, outputConverter,
                 ErrorCode.INTERVIEW_QUESTION_GENERATION_FAILED,
                 "简历题生成失败：", "简历题", log);
 
@@ -222,7 +224,7 @@ public class InterviewQuestionService {
     }
 
     private List<InterviewQuestionDTO> generateDirectionOnly(
-            ChatClient chatClient, SkillDTO skill, String difficultyDesc,
+            ChatClient questionClient, SkillDTO skill, String difficultyDesc,
             int questionCount, String historicalSection) {
         Map<String, Integer> allocation = skillService.calculateAllocation(skill.categories(), questionCount);
         String allocationTable = skillService.buildAllocationDescription(allocation, skill.categories());
@@ -249,7 +251,7 @@ public class InterviewQuestionService {
             String userPrompt = skillUserPromptTemplate.render(variables);
 
             QuestionListDTO dto = structuredOutputInvoker.invoke(
-                chatClient, systemPrompt, userPrompt, outputConverter,
+                questionClient, systemPrompt, userPrompt, outputConverter,
                 ErrorCode.INTERVIEW_QUESTION_GENERATION_FAILED,
                 "方向题生成失败：", "方向题", log);
 

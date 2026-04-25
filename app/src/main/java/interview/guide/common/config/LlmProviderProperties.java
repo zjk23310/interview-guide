@@ -12,10 +12,12 @@ import java.util.Map;
 @ConfigurationProperties(prefix = "app.ai")
 public class LlmProviderProperties {
     private String defaultProvider = "dashscope";
+    private String defaultEmbeddingProvider;
     private Map<String, ProviderConfig> providers;
     private AdvisorConfig advisors = new AdvisorConfig();
     private String configYamlPath;
     private String configEnvPath;
+    private SecurityConfig security = new SecurityConfig();
 
     @Data
     public static class ProviderConfig {
@@ -23,7 +25,14 @@ public class LlmProviderProperties {
         private String apiKey;
         private String model;
         private String embeddingModel;
+        private Boolean supportsEmbedding;
         private Double temperature;
+    }
+
+    @Data
+    public static class SecurityConfig {
+        private String apiKeyEncryptionKey;
+        private boolean requireEncryptionKey = false;
     }
 
     @Data

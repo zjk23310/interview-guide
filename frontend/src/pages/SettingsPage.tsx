@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import type { ReactNode } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Settings, Plus, Trash2, Plug, CheckCircle, XCircle,
-  Loader2, Eye, EyeOff, RefreshCw, Server, Edit2, Mic, Volume2,
+  Loader2, Eye, EyeOff, RefreshCw, Server, Edit2, Mic, Volume2, ChevronDown,
 } from 'lucide-react';
 import { llmProviderApi } from '../api/llmProvider';
 import ConfirmDialog from '../components/ConfirmDialog';
@@ -10,6 +11,123 @@ import type {
   ProviderItem, CreateProviderRequest, UpdateProviderRequest,
   ProviderTestResult, AsrConfig, TtsConfig, AsrConfigRequest, TtsConfigRequest,
 } from '../types/llmProvider';
+
+// Provider 预设：已知 Provider 的 Base URL、推荐模型和向量模型
+const PROVIDER_PRESETS: Record<string, {
+  baseUrl: string;
+  models: { value: string; label: string }[];
+  embeddingModels?: { value: string; label: string }[];
+}> = {
+  dashscope: {
+    baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    models: [
+      { value: 'qwen3.6-flash', label: 'Qwen3.6 Flash — 最新旗舰' },
+      { value: 'qwen3.5-plus', label: 'Qwen3.5 Plus — 高性能' },
+      { value: 'qwen3.5-flash', label: 'Qwen3.5 Flash — 性价比' },
+      { value: 'qwen3-max', label: 'Qwen3 Max — 旗舰' },
+      { value: 'qwen-max', label: 'Qwen Max — 稳定版' },
+      { value: 'qwen-plus', label: 'Qwen Plus — 均衡' },
+      { value: 'qwen-flash', label: 'Qwen Flash — 经济' },
+      { value: 'qwq-32b', label: 'QwQ-32B — 推理专用' },
+    ],
+    embeddingModels: [
+      { value: 'text-embedding-v3', label: 'text-embedding-v3 — 推荐' },
+    ],
+  },
+  deepseek: {
+    baseUrl: 'https://api.deepseek.com',
+    models: [
+      { value: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash — 最新·快速' },
+      { value: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro — 最强推理' },
+      { value: 'deepseek-chat', label: 'DeepSeek V3.2 — 旧版对话（即将弃用）' },
+      { value: 'deepseek-reasoner', label: 'DeepSeek R1 — 旧版推理（即将弃用）' },
+    ],
+  },
+  glm: {
+    baseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4',
+    models: [
+      { value: 'glm-5.1', label: 'GLM-5.1 — 最新旗舰' },
+      { value: 'glm-5', label: 'GLM-5 — 旗舰' },
+      { value: 'glm-4.7', label: 'GLM-4.7 — Coding 强' },
+      { value: 'glm-4.7-flash', label: 'GLM-4.7 Flash — 免费' },
+      { value: 'glm-4.6', label: 'GLM-4.6 — 200K 上下文' },
+      { value: 'glm-4-plus', label: 'GLM-4 Plus — 高性能' },
+      { value: 'glm-4-air-250414', label: 'GLM-4 Air — 高性价比' },
+      { value: 'glm-4-flash-250414', label: 'GLM-4 Flash — 免费' },
+    ],
+    embeddingModels: [
+      { value: 'embedding-3', label: 'embedding-3 — 推荐' },
+    ],
+  },
+  kimi: {
+    baseUrl: 'https://api.moonshot.cn/v1',
+    models: [
+      { value: 'kimi-k2.6', label: 'Kimi K2.6 — 最新最智能' },
+      { value: 'kimi-k2.5', label: 'Kimi K2.5 — 多模态' },
+      { value: 'kimi-k2', label: 'Kimi K2 — MoE 基座' },
+      { value: 'kimi-k2-thinking', label: 'Kimi K2 Thinking — 深度推理' },
+      { value: 'kimi-latest', label: 'kimi-latest — 自动最新' },
+    ],
+  },
+};
+
+type ConfigRowProps = {
+  label: string;
+  value: ReactNode;
+  title?: string;
+  monospace?: boolean;
+  emphasis?: boolean;
+};
+
+type StatusBadgeProps = {
+  icon: ReactNode;
+  children: ReactNode;
+};
+
+const CARD_CLASS = `flex h-full min-h-[330px] flex-col rounded-xl border border-slate-200
+  bg-white p-5 shadow-sm transition-shadow hover:shadow-md dark:border-slate-700
+  dark:bg-slate-800`;
+
+const ICON_WRAP_CLASS = `flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg
+  bg-primary-50 text-primary-600 dark:bg-primary-900/30 dark:text-primary-300`;
+
+const DETAILS_CLASS = `mb-4 flex-1 space-y-1 rounded-lg border border-slate-100 bg-slate-50/70
+  p-3 dark:border-slate-700/80 dark:bg-slate-900/30`;
+
+const ACTION_BAR_CLASS = `mt-auto flex min-h-12 flex-wrap items-center gap-2 border-t
+  border-slate-100 pt-3 dark:border-slate-700`;
+
+const ACTION_BUTTON_CLASS = `inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs
+  font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50`;
+
+function StatusBadge({ icon, children }: StatusBadgeProps) {
+  return (
+    <span className="inline-flex h-6 items-center gap-1.5 rounded-full bg-primary-50 px-2.5 text-xs font-semibold text-primary-700 dark:bg-primary-900/30 dark:text-primary-300">
+      {icon}
+      {children}
+    </span>
+  );
+}
+
+function ConfigRow({ label, value, title, monospace = false, emphasis = false }: ConfigRowProps) {
+  return (
+    <div
+      className={`grid grid-cols-[108px_minmax(0,1fr)] items-start gap-3 rounded-md px-2 py-2 text-xs ${
+        emphasis ? 'bg-white shadow-sm ring-1 ring-slate-100 dark:bg-slate-800/80 dark:ring-slate-700' : ''
+      }`}
+    >
+      <dt className="whitespace-nowrap text-slate-500 dark:text-slate-400">{label}</dt>
+      <dd
+        className={`min-w-0 truncate text-right font-medium text-slate-700 dark:text-slate-200 ${
+          monospace ? 'font-mono' : ''
+        }`}
+        title={title}
+      >
+        {value}
+      </dd>
+    </div>
+  );
+}
 
 export default function SettingsPage() {
   const [providers, setProviders] = useState<ProviderItem[]>([]);
@@ -29,6 +147,14 @@ export default function SettingsPage() {
   const [formEmbeddingModel, setFormEmbeddingModel] = useState('');
   const [formTemperature, setFormTemperature] = useState('');
   const [showApiKey, setShowApiKey] = useState(false);
+  const [showModelDropdown, setShowModelDropdown] = useState(false);
+  const [showEmbeddingDropdown, setShowEmbeddingDropdown] = useState(false);
+
+  // 当前表单 Provider ID 匹配的预设
+  const currentPreset = useMemo(
+    () => PROVIDER_PRESETS[formId.toLowerCase()],
+    [formId],
+  );
 
   // Test state
   const [testingId, setTestingId] = useState<string | null>(null);
@@ -385,7 +511,7 @@ export default function SettingsPage() {
                   <p className="text-slate-500 dark:text-slate-400 text-sm">暂无 Provider，点击上方按钮新增</p>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 items-stretch gap-4 md:grid-cols-2">
                   {providers.map((provider, index) => {
                     const isGlobalDefault = isGlobalDefaultProvider(provider.id);
 
@@ -395,63 +521,48 @@ export default function SettingsPage() {
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: index * 0.05 }}
-                      className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-5 shadow-sm"
+                      className={CARD_CLASS}
                     >
                       {/* Card header */}
-                      <div className="flex items-start justify-between mb-3">
-                        <div className="flex items-center gap-2.5">
-                          <div className={`p-2 rounded-lg ${
-                            isGlobalDefault
-                              ? 'bg-primary-100 dark:bg-primary-900/30'
-                              : 'bg-slate-100 dark:bg-slate-700'
-                          }`}>
-                            <Server className={`w-4 h-4 ${
-                              isGlobalDefault
-                                ? 'text-primary-600 dark:text-primary-400'
-                                : 'text-slate-600 dark:text-slate-400'
-                            }`} />
+                      <div className="mb-4 flex items-start justify-between gap-3">
+                        <div className="flex min-w-0 items-center gap-3">
+                          <div className={ICON_WRAP_CLASS}>
+                            <Server className="h-4 w-4" />
                           </div>
-                          <div>
-                            <h3 className="font-semibold text-slate-800 dark:text-white text-sm">
+                          <div className="min-w-0">
+                            <h3 className="truncate text-sm font-semibold text-slate-800 dark:text-white">
                               {provider.id}
                             </h3>
-                            {isGlobalDefault && (
-                              <span className="ml-1 inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-300">
-                                <Plug className="w-3 h-3" />
-                                全局默认
-                              </span>
-                            )}
+                            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">文字模型 Provider</p>
                           </div>
                         </div>
+                        {isGlobalDefault && (
+                          <StatusBadge icon={<Plug className="h-3 w-3" />}>全局默认</StatusBadge>
+                        )}
                       </div>
 
                       {/* Card details */}
-                      <div className="space-y-1.5 mb-4 text-xs">
-                        <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
-                          <span className="font-medium text-slate-600 dark:text-slate-300 w-16 flex-shrink-0">Base URL</span>
-                          <span className="truncate" title={provider.baseUrl}>{provider.baseUrl}</span>
-                        </div>
-                        <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
-                          <span className="font-medium text-slate-600 dark:text-slate-300 w-16 flex-shrink-0">Model</span>
-                          <span className="truncate" title={provider.model}>{provider.model}</span>
-                        </div>
+                      <dl className={DETAILS_CLASS}>
+                        <ConfigRow label="Base URL" value={provider.baseUrl} title={provider.baseUrl} emphasis />
+                        <ConfigRow label="模型" value={provider.model} title={provider.model} emphasis />
                         {provider.embeddingModel && (
-                          <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
-                            <span className="font-medium text-slate-600 dark:text-slate-300 w-16 flex-shrink-0">Embed</span>
-                            <span className="truncate" title={provider.embeddingModel}>{provider.embeddingModel}</span>
-                          </div>
+                          <ConfigRow
+                            label="向量模型"
+                            value={provider.embeddingModel}
+                            title={provider.embeddingModel}
+                          />
                         )}
                         {provider.temperature != null && (
-                          <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
-                            <span className="font-medium text-slate-600 dark:text-slate-300 w-16 flex-shrink-0">Temp</span>
-                            <span>{provider.temperature}</span>
-                          </div>
+                          <ConfigRow label="温度" value={provider.temperature} />
                         )}
-                        <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
-                          <span className="font-medium text-slate-600 dark:text-slate-300 w-16 flex-shrink-0">API Key</span>
-                          <span className="font-mono">{provider.maskedApiKey}</span>
-                        </div>
-                      </div>
+                        <ConfigRow
+                          label="API Key"
+                          value={provider.maskedApiKey}
+                          title={provider.maskedApiKey}
+                          monospace
+                          emphasis
+                        />
+                      </dl>
 
                       {/* Test result */}
                       {testResults[provider.id] && (
@@ -475,11 +586,10 @@ export default function SettingsPage() {
                       )}
 
                       {/* Card actions */}
-                      <div className="flex items-center gap-1.5 pt-3 border-t border-slate-100 dark:border-slate-700">
+                      <div className={ACTION_BAR_CLASS}>
                         <button
                           onClick={() => openEditModal(provider)}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
-                            text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                          className={`${ACTION_BUTTON_CLASS} text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700`}
                           title="编辑"
                         >
                           <Edit2 className="w-3.5 h-3.5" />
@@ -488,9 +598,7 @@ export default function SettingsPage() {
                         <button
                           onClick={() => handleTest(provider.id)}
                           disabled={testingId === provider.id}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
-                            text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors
-                            disabled:opacity-50 disabled:cursor-not-allowed"
+                          className={`${ACTION_BUTTON_CLASS} text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20`}
                           title="测试连接"
                         >
                           {testingId === provider.id
@@ -502,9 +610,7 @@ export default function SettingsPage() {
                         <button
                           onClick={() => handleSetDefault(provider.id)}
                           disabled={isGlobalDefault || settingDefault}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
-                            text-primary-600 dark:text-primary-400 hover:bg-primary-50 dark:hover:bg-primary-900/20 transition-colors
-                            disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent dark:disabled:hover:bg-transparent"
+                          className={`${ACTION_BUTTON_CLASS} text-primary-600 hover:bg-primary-50 dark:text-primary-400 dark:hover:bg-primary-900/20 disabled:hover:bg-transparent dark:disabled:hover:bg-transparent`}
                           title="设为默认文字服务"
                         >
                           <Plug className="w-3.5 h-3.5" />
@@ -512,9 +618,7 @@ export default function SettingsPage() {
                         </button>
                         <button
                           onClick={() => setDeleteConfirmId(provider.id)}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
-                            text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors
-                            ml-auto"
+                          className={`${ACTION_BUTTON_CLASS} ml-auto text-slate-400 hover:bg-red-50 hover:text-red-500 dark:text-slate-500 dark:hover:bg-red-900/20 dark:hover:text-red-300`}
                           title="删除"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -531,52 +635,42 @@ export default function SettingsPage() {
                 <h2 className="text-lg font-bold text-slate-800 dark:text-white mb-4">
                   语音服务
                 </h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 items-stretch gap-4 md:grid-cols-2">
                   {/* ASR Card */}
                   {asrConfig && (
                     <motion.div
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
-                      className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-5 shadow-sm"
+                      className={CARD_CLASS}
                     >
-                      <div className="flex items-start justify-between mb-3">
-                        <div className="flex items-center gap-2.5">
-                          <div className="p-2 rounded-lg bg-purple-100 dark:bg-purple-900/30">
-                            <Mic className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                      <div className="mb-4 flex items-start justify-between gap-3">
+                        <div className="flex min-w-0 items-center gap-3">
+                          <div className={ICON_WRAP_CLASS}>
+                            <Mic className="h-4 w-4" />
                           </div>
-                          <div>
-                            <h3 className="font-semibold text-slate-800 dark:text-white text-sm">
+                          <div className="min-w-0">
+                            <h3 className="truncate text-sm font-semibold text-slate-800 dark:text-white">
                               ASR 语音识别
                             </h3>
-                            <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300">
-                              语音服务
-                            </span>
+                            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">实时语音转写配置</p>
                           </div>
                         </div>
+                        <StatusBadge icon={<Mic className="h-3 w-3" />}>语音服务</StatusBadge>
                       </div>
 
-                      <div className="space-y-1.5 mb-4 text-xs">
-                        <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
-                          <span className="font-medium text-slate-600 dark:text-slate-300 w-16 flex-shrink-0">URL</span>
-                          <span className="truncate" title={asrConfig.url}>{asrConfig.url}</span>
-                        </div>
-                        <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
-                          <span className="font-medium text-slate-600 dark:text-slate-300 w-16 flex-shrink-0">Model</span>
-                          <span className="truncate">{asrConfig.model}</span>
-                        </div>
-                        <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
-                          <span className="font-medium text-slate-600 dark:text-slate-300 w-16 flex-shrink-0">Language</span>
-                          <span>{asrConfig.language}</span>
-                        </div>
-                        <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
-                          <span className="font-medium text-slate-600 dark:text-slate-300 w-16 flex-shrink-0">Sample</span>
-                          <span>{asrConfig.sampleRate}Hz</span>
-                        </div>
-                        <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
-                          <span className="font-medium text-slate-600 dark:text-slate-300 w-16 flex-shrink-0">API Key</span>
-                          <span className="font-mono">{asrConfig.maskedApiKey}</span>
-                        </div>
-                      </div>
+                      <dl className={DETAILS_CLASS}>
+                        <ConfigRow label="WebSocket URL" value={asrConfig.url} title={asrConfig.url} emphasis />
+                        <ConfigRow label="识别模型" value={asrConfig.model} title={asrConfig.model} emphasis />
+                        <ConfigRow label="识别语言" value={asrConfig.language} />
+                        <ConfigRow label="采样率" value={`${asrConfig.sampleRate}Hz`} />
+                        <ConfigRow
+                          label="API Key"
+                          value={asrConfig.maskedApiKey}
+                          title={asrConfig.maskedApiKey}
+                          monospace
+                          emphasis
+                        />
+                      </dl>
 
                       {asrTestResult && (
                         <div className={`mb-3 px-3 py-2 rounded-lg text-xs font-medium ${
@@ -594,11 +688,10 @@ export default function SettingsPage() {
                         </div>
                       )}
 
-                      <div className="flex items-center gap-1.5 pt-3 border-t border-slate-100 dark:border-slate-700">
+                      <div className={ACTION_BAR_CLASS}>
                         <button
                           onClick={openAsrModal}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
-                            text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                          className={`${ACTION_BUTTON_CLASS} text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700`}
                         >
                           <Edit2 className="w-3.5 h-3.5" />
                           编辑
@@ -606,9 +699,7 @@ export default function SettingsPage() {
                         <button
                           onClick={handleTestAsr}
                           disabled={testingAsr}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
-                            text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors
-                            disabled:opacity-50 disabled:cursor-not-allowed"
+                          className={`${ACTION_BUTTON_CLASS} text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20`}
                         >
                           {testingAsr
                             ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -626,52 +717,41 @@ export default function SettingsPage() {
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: 0.05 }}
-                      className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-5 shadow-sm"
+                      className={CARD_CLASS}
                     >
-                      <div className="flex items-start justify-between mb-3">
-                        <div className="flex items-center gap-2.5">
-                          <div className="p-2 rounded-lg bg-purple-100 dark:bg-purple-900/30">
-                            <Volume2 className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                      <div className="mb-4 flex items-start justify-between gap-3">
+                        <div className="flex min-w-0 items-center gap-3">
+                          <div className={ICON_WRAP_CLASS}>
+                            <Volume2 className="h-4 w-4" />
                           </div>
-                          <div>
-                            <h3 className="font-semibold text-slate-800 dark:text-white text-sm">
+                          <div className="min-w-0">
+                            <h3 className="truncate text-sm font-semibold text-slate-800 dark:text-white">
                               TTS 语音合成
                             </h3>
-                            <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300">
-                              语音服务
-                            </span>
+                            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">文本转语音输出配置</p>
                           </div>
                         </div>
+                        <StatusBadge icon={<Volume2 className="h-3 w-3" />}>语音服务</StatusBadge>
                       </div>
 
-                      <div className="space-y-1.5 mb-4 text-xs">
-                        <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
-                          <span className="font-medium text-slate-600 dark:text-slate-300 w-16 flex-shrink-0">Model</span>
-                          <span className="truncate">{ttsConfig.model}</span>
-                        </div>
-                        <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
-                          <span className="font-medium text-slate-600 dark:text-slate-300 w-16 flex-shrink-0">Voice</span>
-                          <span>{ttsConfig.voice}</span>
-                        </div>
-                        <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
-                          <span className="font-medium text-slate-600 dark:text-slate-300 w-16 flex-shrink-0">Sample</span>
-                          <span>{ttsConfig.sampleRate}Hz</span>
-                        </div>
-                        <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
-                          <span className="font-medium text-slate-600 dark:text-slate-300 w-16 flex-shrink-0">Volume</span>
-                          <span>{ttsConfig.volume}</span>
-                        </div>
-                        <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
-                          <span className="font-medium text-slate-600 dark:text-slate-300 w-16 flex-shrink-0">API Key</span>
-                          <span className="font-mono">{ttsConfig.maskedApiKey}</span>
-                        </div>
-                      </div>
+                      <dl className={DETAILS_CLASS}>
+                        <ConfigRow label="合成模型" value={ttsConfig.model} title={ttsConfig.model} emphasis />
+                        <ConfigRow label="音色" value={ttsConfig.voice} title={ttsConfig.voice} emphasis />
+                        <ConfigRow label="采样率" value={`${ttsConfig.sampleRate}Hz`} />
+                        <ConfigRow label="音量" value={ttsConfig.volume} />
+                        <ConfigRow
+                          label="API Key"
+                          value={ttsConfig.maskedApiKey}
+                          title={ttsConfig.maskedApiKey}
+                          monospace
+                          emphasis
+                        />
+                      </dl>
 
-                      <div className="flex items-center gap-1.5 pt-3 border-t border-slate-100 dark:border-slate-700">
+                      <div className={ACTION_BAR_CLASS}>
                         <button
                           onClick={openTtsModal}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
-                            text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                          className={`${ACTION_BUTTON_CLASS} text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700`}
                         >
                           <Edit2 className="w-3.5 h-3.5" />
                           编辑
@@ -717,9 +797,19 @@ export default function SettingsPage() {
                     <input
                       type="text"
                       value={formId}
-                      onChange={(e) => setFormId(e.target.value)}
+                      onChange={(e) => {
+                        const newId = e.target.value;
+                        setFormId(newId);
+                        // 新建时自动填充已知 Provider 的 Base URL
+                        if (!editingProvider) {
+                          const preset = PROVIDER_PRESETS[newId.toLowerCase()];
+                          if (preset) {
+                            setFormBaseUrl(preset.baseUrl);
+                          }
+                        }
+                      }}
                       disabled={!!editingProvider}
-                      placeholder="例如: dashscope, kimi, glm"
+                      placeholder="例如: dashscope, deepseek, glm, kimi"
                       className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-600
                         bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white
                         placeholder:text-slate-400 focus:outline-none focus:ring-2
@@ -781,16 +871,57 @@ export default function SettingsPage() {
                     <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
                       Model <span className="text-red-500">*</span>
                     </label>
-                    <input
-                      type="text"
-                      value={formModel}
-                      onChange={(e) => setFormModel(e.target.value)}
-                      placeholder="例如: qwen3.5-flash, kimi-latest, glm-4-flash"
-                      className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-600
-                        bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white
-                        placeholder:text-slate-400 focus:outline-none focus:ring-2
-                        focus:ring-primary-500/50 focus:border-primary-400 transition-shadow"
-                    />
+                    <div className="relative">
+                      <input
+                        type="text"
+                        value={formModel}
+                        onChange={(e) => {
+                          setFormModel(e.target.value);
+                          setShowModelDropdown(false);
+                        }}
+                        onFocus={() => currentPreset && setShowModelDropdown(true)}
+                        onBlur={() => setTimeout(() => setShowModelDropdown(false), 150)}
+                        placeholder={currentPreset ? '从下拉列表选择或输入自定义模型名' : '例如: qwen3.5-flash, deepseek-v4-flash, glm-5'}
+                        className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-600
+                          bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white
+                          placeholder:text-slate-400 focus:outline-none focus:ring-2
+                          focus:ring-primary-500/50 focus:border-primary-400 transition-shadow"
+                      />
+                      {currentPreset && (
+                        <button
+                          type="button"
+                          onClick={() => setShowModelDropdown(!showModelDropdown)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400
+                            hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+                        >
+                          <ChevronDown className="w-4 h-4" />
+                        </button>
+                      )}
+                      {showModelDropdown && currentPreset && (
+                        <div className="absolute z-10 mt-1 w-full bg-white dark:bg-slate-700
+                          border border-slate-200 dark:border-slate-600 rounded-xl shadow-lg
+                          max-h-60 overflow-auto">
+                          {currentPreset.models.map((m) => (
+                            <button
+                              key={m.value}
+                              type="button"
+                              onClick={() => {
+                                setFormModel(m.value);
+                                setShowModelDropdown(false);
+                              }}
+                              className={`w-full px-4 py-2.5 text-left text-sm hover:bg-primary-50
+                                dark:hover:bg-slate-600 transition-colors flex justify-between items-center
+                                ${formModel === m.value
+                                  ? 'text-primary-600 dark:text-primary-400 font-medium bg-primary-50 dark:bg-slate-600'
+                                  : 'text-slate-700 dark:text-slate-200'}`}
+                            >
+                              <span className="font-mono">{m.value}</span>
+                              <span className="text-xs text-slate-400 dark:text-slate-500 ml-2 whitespace-nowrap">{m.label}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   {/* Embedding Model */}
@@ -798,16 +929,57 @@ export default function SettingsPage() {
                     <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
                       Embedding Model <span className="text-slate-400 font-normal">(可选)</span>
                     </label>
-                    <input
-                      type="text"
-                      value={formEmbeddingModel}
-                      onChange={(e) => setFormEmbeddingModel(e.target.value)}
-                      placeholder="例如: text-embedding-3-small"
-                      className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-600
-                        bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white
-                        placeholder:text-slate-400 focus:outline-none focus:ring-2
-                        focus:ring-primary-500/50 focus:border-primary-400 transition-shadow"
-                    />
+                    <div className="relative">
+                      <input
+                        type="text"
+                        value={formEmbeddingModel}
+                        onChange={(e) => {
+                          setFormEmbeddingModel(e.target.value);
+                          setShowEmbeddingDropdown(false);
+                        }}
+                        onFocus={() => currentPreset?.embeddingModels && setShowEmbeddingDropdown(true)}
+                        onBlur={() => setTimeout(() => setShowEmbeddingDropdown(false), 150)}
+                        placeholder={currentPreset?.embeddingModels ? '从下拉列表选择或输入自定义模型名' : '例如: text-embedding-v3'}
+                        className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-600
+                          bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white
+                          placeholder:text-slate-400 focus:outline-none focus:ring-2
+                          focus:ring-primary-500/50 focus:border-primary-400 transition-shadow"
+                      />
+                      {currentPreset?.embeddingModels && (
+                        <button
+                          type="button"
+                          onClick={() => setShowEmbeddingDropdown(!showEmbeddingDropdown)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400
+                            hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+                        >
+                          <ChevronDown className="w-4 h-4" />
+                        </button>
+                      )}
+                      {showEmbeddingDropdown && currentPreset?.embeddingModels && (
+                        <div className="absolute z-10 mt-1 w-full bg-white dark:bg-slate-700
+                          border border-slate-200 dark:border-slate-600 rounded-xl shadow-lg
+                          max-h-60 overflow-auto">
+                          {currentPreset.embeddingModels.map((m) => (
+                            <button
+                              key={m.value}
+                              type="button"
+                              onClick={() => {
+                                setFormEmbeddingModel(m.value);
+                                setShowEmbeddingDropdown(false);
+                              }}
+                              className={`w-full px-4 py-2.5 text-left text-sm hover:bg-primary-50
+                                dark:hover:bg-slate-600 transition-colors flex justify-between items-center
+                                ${formEmbeddingModel === m.value
+                                  ? 'text-primary-600 dark:text-primary-400 font-medium bg-primary-50 dark:bg-slate-600'
+                                  : 'text-slate-700 dark:text-slate-200'}`}
+                            >
+                              <span className="font-mono">{m.value}</span>
+                              <span className="text-xs text-slate-400 dark:text-slate-500 ml-2 whitespace-nowrap">{m.label}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   {/* Temperature */}

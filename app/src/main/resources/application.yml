@@ -115,11 +115,16 @@ app:
         api-key: ${PROVIDER_KIMI_API_KEY:}
         model: ${PROVIDER_KIMI_MODEL:kimi-latest}
         temperature: 1
+      # DeepSeek（OpenAI 兼容） https://api-docs.deepseek.com/
+      deepseek:
+        base-url: https://api.deepseek.com
+        api-key: ${PROVIDER_DEEPSEEK_API_KEY:}
+        model: ${PROVIDER_DEEPSEEK_MODEL:deepseek-v4-flash}
       # 智谱 AI / GLM（OpenAI 兼容） https://open.bigmodel.cn/
       glm:
         base-url: https://open.bigmodel.cn/api/coding/paas/v4
         api-key: ${PROVIDER_GLM_API_KEY:}
-        model: ${PROVIDER_GLM_MODEL:glm-4-flash}
+        model: ${PROVIDER_GLM_MODEL:glm-5}
         embedding-model: embedding-3
     advisors:
       enabled: ${APP_AI_ADVISORS_ENABLED:true}

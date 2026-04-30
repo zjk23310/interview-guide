@@ -50,4 +50,11 @@ public class VoiceInterviewMessageEntity {
         this.createdAt = LocalDateTime.now();
         this.timestamp = LocalDateTime.now();
     }
+
+    public static String trimToNull(String text) {
+        if (text == null || text.isBlank()) {
+            return null;
+        }
+        return text.trim();
+    }
 }

@@ -245,8 +245,8 @@ public class VoiceInterviewService {
             return;
         }
 
-        String normalizedUserText = normalizeBlankToNull(userText);
-        String normalizedAiText = normalizeBlankToNull(aiText);
+        String normalizedUserText = VoiceInterviewMessageEntity.trimToNull(userText);
+        String normalizedAiText = VoiceInterviewMessageEntity.trimToNull(aiText);
 
         boolean answerAttached = normalizedUserText != null
             && fillLatestUnansweredQuestion(sessionIdLong, normalizedUserText);
@@ -282,13 +282,6 @@ public class VoiceInterviewService {
                 return true;
             })
             .orElse(false);
-    }
-
-    private String normalizeBlankToNull(String text) {
-        if (text == null || text.isBlank()) {
-            return null;
-        }
-        return text.trim();
     }
 
     /**

@@ -98,8 +98,8 @@ public class VoiceInterviewEvaluationService {
         PendingQuestion pendingQuestion = null;
 
         for (VoiceInterviewMessageEntity msg : messages) {
-            String aiText = trimToNull(msg.getAiGeneratedText());
-            String userText = trimToNull(msg.getUserRecognizedText());
+            String aiText = VoiceInterviewMessageEntity.trimToNull(msg.getAiGeneratedText());
+            String userText = VoiceInterviewMessageEntity.trimToNull(msg.getUserRecognizedText());
 
             if (pendingQuestion != null && userText != null) {
                 records.add(new QaRecord(
@@ -148,13 +148,6 @@ public class VoiceInterviewEvaluationService {
         }
 
         return records;
-    }
-
-    private String trimToNull(String text) {
-        if (text == null || text.isBlank()) {
-            return null;
-        }
-        return text.trim();
     }
 
     private record PendingQuestion(String question, String category) {}

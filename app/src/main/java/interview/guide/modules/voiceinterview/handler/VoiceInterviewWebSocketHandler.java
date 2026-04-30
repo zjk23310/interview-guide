@@ -697,9 +697,9 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
                             return;
                         }
 
-                        // 有句子级 TTS 失败时，用完整文本做一次兜底 TTS，保证音频完整
-                        if (failedCount > 0 && session.isOpen()) {
-                            log.info("[Session: {}] {} sentence TTS calls failed, falling back to single full-text TTS",
+                        // 有句子级 TTS 失败且无成功结果时，用完整文本做一次兜底 TTS
+                        if (totalSize == 0 && failedCount > 0 && session.isOpen()) {
+                            log.info("[Session: {}] All {} sentence TTS calls failed, falling back to full-text TTS",
                                 sessionId, failedCount);
                             try {
                                 byte[] fallbackPcm = ttsService.synthesize(aiReply);
@@ -769,9 +769,6 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
             }
 
             state.setAccumulatedText("");
-            // AI 说话结束，设置冷却期后解除封锁
-            state.aiSpeaking.set(false);
-            state.aiSpeakEndAt.set(System.currentTimeMillis() + AI_SPEAK_COOLDOWN_MS);
             recordTimerSinceNanos("app.voice.interview.turn.duration", turnStartNanos, "status", "success");
             incrementCounter("app.voice.interview.turn.completed", "status", "success");
 
@@ -821,7 +818,6 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
 
         switch (control.getAction()) {
             case "submit":
-                // 前端传入用户确认的文本，直接覆盖 mergeBuffer，避免与 STT 残留重复
                 if (control.getData() != null) {
                     Object textObj = control.getData().get("text");
                     if (textObj instanceof String text && !text.isBlank()) {
@@ -1023,8 +1019,8 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
             String pendingAiQuestion = null;
 
             for (VoiceInterviewMessageEntity msg : messages) {
-                String aiText = normalizeHistoryText(msg.getAiGeneratedText());
-                String userText = normalizeHistoryText(msg.getUserRecognizedText());
+                String aiText = VoiceInterviewMessageEntity.trimToNull(msg.getAiGeneratedText());
+                String userText = VoiceInterviewMessageEntity.trimToNull(msg.getUserRecognizedText());
 
                 if (pendingAiQuestion != null) {
                     history.add("面试官：" + pendingAiQuestion);
@@ -1057,13 +1053,6 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
             log.error("Error loading conversation history for session {}", sessionId, e);
             return new ArrayList<>();
         }
-    }
-
-    private String normalizeHistoryText(String text) {
-        if (text == null || text.isBlank()) {
-            return null;
-        }
-        return text.trim();
     }
 
     /**

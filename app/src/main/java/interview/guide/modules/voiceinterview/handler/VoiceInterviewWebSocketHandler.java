@@ -945,6 +945,18 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
         });
     }
 
+    @Scheduled(fixedRate = 300_000)
+    public void cleanupStaleSessions() {
+        try {
+            int cleaned = interviewService.cleanupStaleSessions();
+            if (cleaned > 0) {
+                log.info("Stale session cleanup: {} sessions cleaned", cleaned);
+            }
+        } catch (Exception e) {
+            log.error("Error during stale session cleanup", e);
+        }
+    }
+
     /**
      * Send pause warning notification
      * 发送暂停警告通知

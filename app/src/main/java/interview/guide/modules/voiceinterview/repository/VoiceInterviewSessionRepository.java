@@ -42,4 +42,14 @@ public interface VoiceInterviewSessionRepository extends JpaRepository<VoiceInte
         String userId,
         VoiceInterviewSessionStatus status
     );
+
+    List<VoiceInterviewSessionEntity> findByStatusAndStartTimeBefore(
+        VoiceInterviewSessionStatus status,
+        LocalDateTime time
+    );
+
+    List<VoiceInterviewSessionEntity> findByEvaluateStatusAndUpdatedAtBefore(
+        interview.guide.common.model.AsyncTaskStatus evaluateStatus,
+        LocalDateTime time
+    );
 }

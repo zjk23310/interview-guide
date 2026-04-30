@@ -501,6 +501,11 @@ export default function VoiceInterviewPage() {
       setSessionId(session.sessionId);
       setCurrentPhase(session.currentPhase);
 
+      if (session.startTime) {
+        const elapsedSec = Math.floor((Date.now() - new Date(session.startTime).getTime()) / 1000);
+        setCurrentTime(elapsedSec > 0 ? elapsedSec : 0);
+      }
+
       const restored: { role: 'user' | 'ai'; text: string; id: string }[] = [];
       let pendingAi: { text: string; id: string } | null = null;
       for (const msg of history) {

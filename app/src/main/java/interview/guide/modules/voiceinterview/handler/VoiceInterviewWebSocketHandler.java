@@ -233,9 +233,9 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
                     return;
                 }
 
-                // 文本先行，保证前端立即可见
-                sendTextMessage(session, aiReply);
+                // 先落库再推前端，确保用户提交时 DB 中已有该条消息
                 saveMessage(sessionId, null, aiReply);
+                sendTextMessage(session, aiReply, true);
 
                 // 语音随后下发
                 byte[] wavAudio = getOpeningWavAudio(aiReply);
@@ -502,14 +502,21 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
 
         if (!isFinalSegment) {
             state.markSttActivity();
-            sendSubtitle(session, recognizedText, false);
+            sendSubtitle(session, state.getMergeBufferPreviewWithPartial(recognizedText), false);
+            return;
+        }
+
+        // 用户已提交、LLM 正在处理时，丢弃迟到的 STT 定稿段，防止污染下一轮 mergeBuffer
+        if (state.isProcessing().get()) {
+            log.debug("Discarding late STT final segment during processing for session {}: {}",
+                sessionId, recognizedText);
             return;
         }
 
         log.debug("STT final segment for session {}: {}", sessionId, recognizedText);
         incrementCounter("app.voice.interview.asr.final_segments", "status", "received");
 
-        // 合并多次 VAD 切段，等用户手动提交后统一触发 LLM
+        // 合并多次 VAD 切段，只更新实时字幕；是否提交给 LLM 由前端手动 submit 控制
         state.appendFinalSttSegment(recognizedText);
         sendSubtitle(session, state.getMergeBufferPreview(), false);
     }
@@ -610,7 +617,7 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
                                 "status", "success"
                             );
                         }
-                        sendTextMessage(session, partialText);
+                        sendTextMessage(session, partialText, false);
                     },
                     sentence -> {
                         if (sentence == null || sentence.isBlank()) {
@@ -640,24 +647,26 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
                 }
 
                 sendSubtitle(session, userText, true);
-                sendTextMessage(session, aiReply);
+                sendTextMessage(session, aiReply, true);
                 saveMessage(sessionId, userText, aiReply);
 
-                // 按顺序收集所有 TTS 结果
+                // 按顺序收集所有 TTS 结果（带超时，防止单句 TTS 挂死阻塞整条管道）
                 if (!ttsFutures.isEmpty()) {
                     long ttsStartNanos = System.nanoTime();
                     boolean chunkedEnabled = voiceInterviewProperties.isChunkedAudioEnabled();
+                    long ttsTimeoutSec = Math.max(5, voiceInterviewProperties.getTtsTimeoutSeconds());
 
                     if (chunkedEnabled) {
                         // 分块推送模式：每句 TTS 完成后立即推送
                         for (int i = 0; i < ttsFutures.size(); i++) {
                             try {
-                                byte[] pcm = ttsFutures.get(i).get();
+                                byte[] pcm = ttsFutures.get(i).get(ttsTimeoutSec, TimeUnit.SECONDS);
                                 if (pcm != null && pcm.length > 0 && session.isOpen()) {
                                     byte[] wavAudio = convertPcmToWav(pcm);
                                     sendAudioChunk(session, wavAudio, i, i == ttsFutures.size() - 1);
                                 }
                             } catch (Exception e) {
+                                ttsFutures.get(i).cancel(true);
                                 log.warn("[Session: {}] TTS chunk {} failed: {}", sessionId, i, e.getMessage());
                             }
                         }
@@ -666,14 +675,18 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
                         // 合并模式：收集所有 PCM 后合并为一个完整音频
                         List<byte[]> pcmChunks = new ArrayList<>();
                         int totalSize = 0;
+                        int failedCount = 0;
+                        boolean audioSentByFallback = false;
                         for (CompletableFuture<byte[]> f : ttsFutures) {
                             try {
-                                byte[] pcm = f.get();
+                                byte[] pcm = f.get(ttsTimeoutSec, TimeUnit.SECONDS);
                                 if (pcm != null && pcm.length > 0) {
                                     pcmChunks.add(pcm);
                                     totalSize += pcm.length;
                                 }
                             } catch (Exception e) {
+                                f.cancel(true);
+                                failedCount++;
                                 log.warn("[Session: {}] TTS future failed for one sentence: {}", sessionId, e.getMessage());
                             }
                         }
@@ -684,20 +697,40 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
                             return;
                         }
 
-                        if (totalSize > 0) {
-                            byte[] mergedPcm = new byte[totalSize];
-                            int offset = 0;
-                            for (byte[] chunk : pcmChunks) {
-                                System.arraycopy(chunk, 0, mergedPcm, offset, chunk.length);
-                                offset += chunk.length;
+                        // 有句子级 TTS 失败时，用完整文本做一次兜底 TTS，保证音频完整
+                        if (failedCount > 0 && session.isOpen()) {
+                            log.info("[Session: {}] {} sentence TTS calls failed, falling back to single full-text TTS",
+                                sessionId, failedCount);
+                            try {
+                                byte[] fallbackPcm = ttsService.synthesize(aiReply);
+                                if (fallbackPcm != null && fallbackPcm.length > 0) {
+                                    byte[] wavAudio = convertPcmToWav(fallbackPcm);
+                                    log.info("[Session: {}] Fallback TTS succeeded, WAV size: {} bytes",
+                                        sessionId, wavAudio.length);
+                                    sendAudio(session, wavAudio, aiReply);
+                                    audioSentByFallback = true;
+                                }
+                            } catch (Exception e) {
+                                log.warn("[Session: {}] Fallback TTS also failed: {}", sessionId, e.getMessage());
                             }
-                            byte[] wavAudio = convertPcmToWav(mergedPcm);
-                            log.info("[Session: {}] Sending merged audio - {} sentences, WAV size: {} bytes",
-                                sessionId, pcmChunks.size(), wavAudio.length);
-                            sendAudio(session, wavAudio, aiReply);
-                        } else {
-                            log.error("[Session: {}] All TTS calls returned empty audio", sessionId);
-                            incrementCounter("app.voice.interview.tts.empty_audio", "status", "empty");
+                        }
+
+                        if (!audioSentByFallback) {
+                            if (totalSize > 0 && session.isOpen()) {
+                                byte[] mergedPcm = new byte[totalSize];
+                                int offset = 0;
+                                for (byte[] chunk : pcmChunks) {
+                                    System.arraycopy(chunk, 0, mergedPcm, offset, chunk.length);
+                                    offset += chunk.length;
+                                }
+                                byte[] wavAudio = convertPcmToWav(mergedPcm);
+                                log.info("[Session: {}] Sending merged audio - {} sentences, WAV size: {} bytes",
+                                    sessionId, pcmChunks.size(), wavAudio.length);
+                                sendAudio(session, wavAudio, aiReply);
+                            } else {
+                                log.error("[Session: {}] All TTS calls returned empty audio", sessionId);
+                                incrementCounter("app.voice.interview.tts.empty_audio", "status", "empty");
+                            }
                         }
                     }
                 }
@@ -713,7 +746,7 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
                 }
 
                 sendSubtitle(session, userText, true);
-                sendTextMessage(session, aiReply);
+                sendTextMessage(session, aiReply, true);
                 saveMessage(sessionId, userText, aiReply);
 
                 long ttsStartNanos = System.nanoTime();
@@ -744,13 +777,15 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
 
         } catch (Exception e) {
             log.error("Error triggering LLM response for session {}", sessionId, e);
-            state.aiSpeaking.set(false);
             recordTimerSinceNanos("app.voice.interview.turn.duration", turnStartNanos, "status", "failure");
             incrementCounter("app.voice.interview.turn.completed", "status", "failure");
             incrementCounter("app.voice.interview.errors", "stage", "turn");
             if (session.isOpen()) {
                 sendError(session, "AI响应失败: " + e.getMessage());
             }
+        } finally {
+            state.aiSpeaking.set(false);
+            state.aiSpeakEndAt.set(System.currentTimeMillis() + AI_SPEAK_COOLDOWN_MS);
         }
     }
 
@@ -786,13 +821,13 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
 
         switch (control.getAction()) {
             case "submit":
-                // 文本提交：前端可能通过 data.text 传入用户输入的文本（非语音识别）
+                // 前端传入用户确认的文本，直接覆盖 mergeBuffer，避免与 STT 残留重复
                 if (control.getData() != null) {
                     Object textObj = control.getData().get("text");
                     if (textObj instanceof String text && !text.isBlank()) {
                         SessionState state = sessionStates.get(sessionId);
                         if (state != null) {
-                            state.appendFinalSttSegment(text);
+                            state.setMergeBufferDirectly(text);
                         }
                     }
                 }
@@ -831,7 +866,15 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
     }
 
     private void sendTextMessage(WebSocketSession session, String text) {
-        sendMessage(session, toJson(Map.of("type", "text", "content", text)));
+        sendTextMessage(session, text, false);
+    }
+
+    private void sendTextMessage(WebSocketSession session, String text, boolean isFinal) {
+        sendMessage(session, toJson(Map.of(
+                "type", "text",
+                "content", text,
+                "final", isFinal
+        )));
     }
 
     private void sendError(WebSocketSession session, String error) {
@@ -977,14 +1020,35 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
         try {
             List<VoiceInterviewMessageEntity> messages = interviewService.getConversationHistory(sessionId);
             List<String> history = new ArrayList<>();
+            String pendingAiQuestion = null;
 
             for (VoiceInterviewMessageEntity msg : messages) {
-                if (msg.getUserRecognizedText() != null && !msg.getUserRecognizedText().isEmpty()) {
-                    history.add("候选人：" + msg.getUserRecognizedText());
+                String aiText = normalizeHistoryText(msg.getAiGeneratedText());
+                String userText = normalizeHistoryText(msg.getUserRecognizedText());
+
+                if (pendingAiQuestion != null) {
+                    history.add("面试官：" + pendingAiQuestion);
+                    pendingAiQuestion = null;
+                    if (userText != null) {
+                        history.add("候选人：" + userText);
+                    }
+                    if (aiText != null) {
+                        pendingAiQuestion = aiText;
+                    }
+                    continue;
                 }
-                if (msg.getAiGeneratedText() != null && !msg.getAiGeneratedText().isEmpty()) {
-                    history.add("面试官：" + msg.getAiGeneratedText());
+
+                if (aiText != null && userText != null) {
+                    history.add("面试官：" + aiText);
+                    history.add("候选人：" + userText);
+                } else if (aiText != null) {
+                    pendingAiQuestion = aiText;
+                } else if (userText != null) {
+                    history.add("候选人：" + userText);
                 }
+            }
+            if (pendingAiQuestion != null) {
+                history.add("面试官：" + pendingAiQuestion);
             }
 
             log.debug("Loaded {} messages from history for session {}", history.size(), sessionId);
@@ -993,6 +1057,13 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
             log.error("Error loading conversation history for session {}", sessionId, e);
             return new ArrayList<>();
         }
+    }
+
+    private String normalizeHistoryText(String text) {
+        if (text == null || text.isBlank()) {
+            return null;
+        }
+        return text.trim();
     }
 
     /**
@@ -1114,14 +1185,55 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
                     mergeStartedAt.set(System.currentTimeMillis());
                     return s;
                 }
-                return prev + s;
+                return joinSegments(prev, s);
             });
             markSttActivity();
+        }
+
+        private static String joinSegments(String previous, String next) {
+            String trimmedPrevious = previous.trim();
+            String trimmedNext = next.trim();
+            if (trimmedNext.equals(trimmedPrevious) || trimmedNext.startsWith(trimmedPrevious)) {
+                return trimmedNext;
+            }
+            if (trimmedPrevious.endsWith(trimmedNext)) {
+                return trimmedPrevious;
+            }
+            if (trimmedPrevious.endsWith("。") || trimmedPrevious.endsWith("！")
+                    || trimmedPrevious.endsWith("？") || trimmedPrevious.endsWith(".")
+                    || trimmedPrevious.endsWith("!") || trimmedPrevious.endsWith("?")) {
+                return trimmedPrevious + " " + trimmedNext;
+            }
+            return trimmedPrevious + "，" + trimmedNext;
         }
 
         String getMergeBufferPreview() {
             String s = mergeBuffer.get();
             return s == null ? "" : s;
+        }
+
+        void setMergeBufferDirectly(String text) {
+            String s = text == null ? "" : text.trim();
+            if (s.isEmpty()) {
+                return;
+            }
+            mergeBuffer.set(s);
+            if (mergeStartedAt.get() == 0) {
+                mergeStartedAt.set(System.currentTimeMillis());
+            }
+        }
+
+        String getMergeBufferPreviewWithPartial(String partial) {
+            String current = partial == null ? "" : partial.trim();
+            if (current.isEmpty()) {
+                return getMergeBufferPreview();
+            }
+
+            String confirmed = getMergeBufferPreview();
+            if (confirmed.isBlank()) {
+                return current;
+            }
+            return joinSegments(confirmed, current);
         }
 
         String takeMergeBufferAndClear() {
@@ -1136,6 +1248,10 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
         long getMergeStartedAt() {
             long value = mergeStartedAt.get();
             return value > 0 ? value : System.currentTimeMillis();
+        }
+
+        long getLastSttActivityAt() {
+            return lastSttActivityAt.get();
         }
 
         String getAccumulatedText() {

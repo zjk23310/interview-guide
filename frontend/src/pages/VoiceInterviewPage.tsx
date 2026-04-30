@@ -60,8 +60,10 @@ export default function VoiceInterviewPage() {
   const autoStartRef = useRef(false);
   const endedByUserRef = useRef(false);
   const isAiSpeakingRef = useRef(false);
+  const aiAudioPendingRef = useRef(false);
   const lastAiCommittedTextRef = useRef('');
   const pendingAiTextCommitRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const audioPlaybackWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Chunked audio playback refs
   const audioContextRef = useRef<AudioContext | null>(null);
   const chunkQueueRef = useRef<AudioBuffer[]>([]);
@@ -84,6 +86,13 @@ export default function VoiceInterviewPage() {
     }
   }, []);
 
+  const clearAudioPlaybackWatchdog = useCallback(() => {
+    if (audioPlaybackWatchdogRef.current) {
+      clearTimeout(audioPlaybackWatchdogRef.current);
+      audioPlaybackWatchdogRef.current = null;
+    }
+  }, []);
+
   const commitAiMessage = useCallback((rawText: string) => {
     const normalized = (rawText || '').trim();
     if (!normalized || normalized === lastAiCommittedTextRef.current) {
@@ -102,6 +111,39 @@ export default function VoiceInterviewPage() {
     lastAiCommittedTextRef.current = normalized;
     setAiText(prev => prev?.trim() === normalized ? '' : prev);
   }, []);
+
+  const estimateWavDurationMs = useCallback((base64Wav: string) => {
+    try {
+      const binary = atob(base64Wav.slice(0, 128));
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      if (bytes.length < 44) {
+        return 15_000;
+      }
+      const view = new DataView(bytes.buffer);
+      const byteRate = view.getUint32(28, true);
+      const dataSize = view.getUint32(40, true);
+      if (byteRate <= 0 || dataSize <= 0) {
+        return 15_000;
+      }
+      return Math.ceil((dataSize / byteRate) * 1000);
+    } catch {
+      return 15_000;
+    }
+  }, []);
+
+  const finishAiPlayback = useCallback(() => {
+    aiAudioPendingRef.current = false;
+    clearAudioPlaybackWatchdog();
+    setAiSpeaking(false);
+    setIsSubmitting(false);
+    clearPendingAiTextCommit();
+    commitAiMessage(aiTextRef.current.trim());
+    setAiText('');
+    setAiAudio('');
+  }, [clearAudioPlaybackWatchdog, clearPendingAiTextCommit, commitAiMessage, setAiSpeaking]);
 
   // --- Chunked audio playback via AudioContext ---
   const getAudioContext = useCallback(() => {
@@ -135,6 +177,8 @@ export default function VoiceInterviewPage() {
 
   const handleAudioChunk = useCallback((base64Wav: string, _index: number, isLast: boolean) => {
     try {
+      aiAudioPendingRef.current = false;
+      clearPendingAiTextCommit();
       const binaryStr = atob(base64Wav);
       const bytes = new Uint8Array(binaryStr.length);
       for (let i = 0; i < binaryStr.length; i++) {
@@ -207,6 +251,7 @@ export default function VoiceInterviewPage() {
       if (wsRef.current) {
         wsRef.current.disconnect();
       }
+      clearAudioPlaybackWatchdog();
       chunkPlaybackSourceRef.current?.stop();
       audioContextRef.current?.close();
       if (drainCheckRef.current) {
@@ -220,7 +265,7 @@ export default function VoiceInterviewPage() {
         voiceInterviewApi.pauseSession(currentSessionId).catch(() => {});
       }
     };
-  }, [clearPendingAiTextCommit, sessionId]);
+  }, [clearAudioPlaybackWatchdog, clearPendingAiTextCommit, sessionId]);
 
   // Start interview timer
   useEffect(() => {
@@ -244,12 +289,11 @@ export default function VoiceInterviewPage() {
       if (playPromise !== undefined) {
         playPromise.catch(() => {
           setError('请点击页面任意位置以启用音频播放');
-          setAiSpeaking(false);
-          setIsSubmitting(false);
+          finishAiPlayback();
         });
       }
     }
-  }, [aiAudio, setAiSpeaking]);
+  }, [aiAudio, finishAiPlayback]);
 
   const startTimer = () => {
     timerRef.current = setInterval(() => {
@@ -273,7 +317,7 @@ export default function VoiceInterviewPage() {
     return phaseMap[phase] || phase;
   };
 
-  // 手动提交回答
+  // 手动提交回答：ASR 只负责生成可编辑文本，不自动触发 LLM
   const handleSubmitAnswer = useCallback(() => {
     if (!wsRef.current || !wsRef.current.isConnected()) {
       return;
@@ -297,7 +341,7 @@ export default function VoiceInterviewPage() {
     },
     onMessage: () => {},
     onSubtitle: (text: string, isFinal: boolean) => {
-      // 手动提交模式下，isFinal=true 由 triggerLlmResponse 触发（提交用户消息到历史）
+      // isFinal=true 由 triggerLlmResponse 触发，表示本轮用户回答已提交到 LLM
       if (isFinal && text.trim()) {
         setMessages(prev => {
           const last = prev[prev.length - 1];
@@ -319,13 +363,20 @@ export default function VoiceInterviewPage() {
       const normalized = (text || '').trim();
       if (hasAudio) {
         clearPendingAiTextCommit();
+        clearAudioPlaybackWatchdog();
+        aiAudioPendingRef.current = false;
         setAiAudio(audioData);
-        setAiText(text);
+        setAiText(normalized);
         setAiSpeaking(true);
+        const durationMs = estimateWavDurationMs(audioData);
+        audioPlaybackWatchdogRef.current = setTimeout(
+          finishAiPlayback,
+          Math.min(Math.max(durationMs + 1500, 4000), 60_000)
+        );
         return;
       }
       setAiAudio('');
-      setAiText(text);
+      setAiText(normalized);
       setAiSpeaking(false);
       if (!normalized) {
         setIsSubmitting(false);
@@ -335,8 +386,32 @@ export default function VoiceInterviewPage() {
       pendingAiTextCommitRef.current = setTimeout(() => {
         commitAiMessage(normalized);
         setIsSubmitting(false);
+        setAiSpeaking(false);
         pendingAiTextCommitRef.current = null;
       }, 2500);
+    },
+    onTextResponse: (text: string, isFinal: boolean) => {
+      const normalized = (text || '').trim();
+      if (!normalized) {
+        return;
+      }
+      aiAudioPendingRef.current = isFinal;
+      setAiText(normalized);
+      setAiSpeaking(true);
+      if (!isFinal) {
+        return;
+      }
+
+      clearPendingAiTextCommit();
+      pendingAiTextCommitRef.current = setTimeout(() => {
+        if (aiAudioPendingRef.current) {
+          aiAudioPendingRef.current = false;
+        }
+        commitAiMessage(normalized);
+        setIsSubmitting(false);
+        setAiSpeaking(false);
+        pendingAiTextCommitRef.current = null;
+      }, 15000);
     },
     onClose: (event: { code: number }) => {
       setConnectionStatus('disconnected');
@@ -347,13 +422,22 @@ export default function VoiceInterviewPage() {
     },
     onError: () => {
       clearPendingAiTextCommit();
+      clearAudioPlaybackWatchdog();
       setError('WebSocket 连接错误，请检查网络后重试');
       setConnectionStatus('disconnected');
     },
     onAudioChunk: (data: string, index: number, isLast: boolean) => {
       handleAudioChunk(data, index, isLast);
     },
-  }), [clearPendingAiTextCommit, commitAiMessage, handleAudioChunk, setAiSpeaking]);
+  }), [
+    clearAudioPlaybackWatchdog,
+    clearPendingAiTextCommit,
+    commitAiMessage,
+    estimateWavDurationMs,
+    finishAiPlayback,
+    handleAudioChunk,
+    setAiSpeaking,
+  ]);
 
   const connectWithHandlers = useCallback((sessionId: number, wsUrl: string) => {
     setTimeout(() => {
@@ -417,16 +501,36 @@ export default function VoiceInterviewPage() {
       setSessionId(session.sessionId);
       setCurrentPhase(session.currentPhase);
 
-      const restored = history.flatMap(msg => {
-        const items: { role: 'user' | 'ai'; text: string; id: string }[] = [];
-        if (msg.userRecognizedText?.trim()) {
-          items.push({ role: 'user', text: msg.userRecognizedText.trim(), id: `user-${msg.id}` });
+      const restored: { role: 'user' | 'ai'; text: string; id: string }[] = [];
+      let pendingAi: { text: string; id: string } | null = null;
+      for (const msg of history) {
+        const aiText = msg.aiGeneratedText?.trim();
+        const userText = msg.userRecognizedText?.trim();
+
+        if (pendingAi) {
+          restored.push({ role: 'ai', text: pendingAi.text, id: pendingAi.id });
+          pendingAi = null;
+          if (userText) {
+            restored.push({ role: 'user', text: userText, id: `user-${msg.id}` });
+          }
+          if (aiText) {
+            pendingAi = { text: aiText, id: `ai-${msg.id}` };
+          }
+          continue;
         }
-        if (msg.aiGeneratedText?.trim()) {
-          items.push({ role: 'ai', text: msg.aiGeneratedText.trim(), id: `ai-${msg.id}` });
+
+        if (aiText && userText) {
+          restored.push({ role: 'ai', text: aiText, id: `ai-${msg.id}` });
+          restored.push({ role: 'user', text: userText, id: `user-${msg.id}` });
+        } else if (aiText) {
+          pendingAi = { text: aiText, id: `ai-${msg.id}` };
+        } else if (userText) {
+          restored.push({ role: 'user', text: userText, id: `user-${msg.id}` });
         }
-        return items;
-      });
+      }
+      if (pendingAi) {
+        restored.push({ role: 'ai', text: pendingAi.text, id: pendingAi.id });
+      }
       setMessages(restored);
 
       const wsUrl = session.webSocketUrl || `ws://localhost:8080/ws/voice-interview/${session.sessionId}`;
@@ -459,8 +563,11 @@ export default function VoiceInterviewPage() {
     }
   }, [handlePhaseConfig, handleResumeSession, presetVoiceConfig, resumeSessionId]);
 
-  // 麦克风音频持续发送给服务端做 ASR（手动提交模式下不需要 blockade，回声不会触发 LLM）
+  // 麦克风音频持续发送给服务端做 ASR；仅 AI 播放时停发，避免回声进入识别
   const handleAudioData = (audioData: string) => {
+    if (isAiSpeakingRef.current) {
+      return;
+    }
     if (wsRef.current && wsRef.current.isConnected()) {
       wsRef.current.sendAudio(audioData);
     } else {
@@ -528,7 +635,7 @@ export default function VoiceInterviewPage() {
   };
 
   // 提交按钮是否可用
-  const canSubmit = isRecording && !!userText.trim() && !isAiSpeaking && !isSubmitting && connectionStatus === 'connected';
+  const canSubmit = !!userText.trim() && !isAiSpeaking && !isSubmitting && connectionStatus === 'connected';
 
   if (!autoStartRef.current && !presetVoiceConfig && !resumeSessionId) {
     return (
@@ -637,7 +744,7 @@ export default function VoiceInterviewPage() {
                         animate={{ opacity: 1 }}
                         className="text-slate-500 dark:text-slate-400"
                       >
-                        {isRecording ? '正在聆听，说完后点击"提交回答"...' : '点击麦克风开始发言'}
+                        {isRecording ? '正在聆听，说完后点击提交回答...' : '点击麦克风开始发言'}
                       </motion.p>
                     )}
                   </AnimatePresence>
@@ -696,7 +803,7 @@ export default function VoiceInterviewPage() {
                 </button>
               </div>
               <p className="text-center text-xs text-slate-500 dark:text-slate-400 mt-3">
-                {isAiSpeaking ? '面试官正在回答...' : isSubmitting ? '正在思考...' : isRecording ? '说完后点击"提交回答"' : '点击麦克风发言'}
+                {isAiSpeaking ? '面试官正在回答...' : isSubmitting ? '正在思考...' : isRecording ? '说完后点击提交回答' : '点击麦克风发言'}
               </p>
             </div>
           </div>
@@ -717,12 +824,7 @@ export default function VoiceInterviewPage() {
           ref={audioPlayerRef}
           src={`data:audio/wav;base64,${aiAudio}`}
           onEnded={() => {
-            setAiSpeaking(false);
-            setIsSubmitting(false);
-            clearPendingAiTextCommit();
-            commitAiMessage(aiText.trim());
-            setAiText('');
-            setAiAudio('');
+            finishAiPlayback();
           }}
           onPlay={() => setAiSpeaking(true)}
           autoPlay

@@ -492,6 +492,7 @@ public class LlmProviderConfigService {
     rwLock.writeLock().lock();
     try {
       VoiceInterviewProperties.AsrConfig asr = voiceProperties.getQwen().getAsr();
+      VoiceInterviewProperties.QwenTtsConfig tts = voiceProperties.getQwen().getTts();
       if (request.url() != null) asr.setUrl(request.url());
       if (request.model() != null) asr.setModel(request.model());
       if (request.language() != null) asr.setLanguage(request.language());
@@ -503,11 +504,15 @@ public class LlmProviderConfigService {
       if (request.turnDetectionSilenceDurationMs() != null) asr.setTurnDetectionSilenceDurationMs(request.turnDetectionSilenceDurationMs());
       if (request.apiKey() != null) {
         asr.setApiKey(request.apiKey());
+        tts.setApiKey(request.apiKey());
         updateEnvValue("AI_BAILIAN_API_KEY", request.apiKey());
       }
 
       writeAsrConfigToYaml(asr);
       asrService.reload(voiceProperties);
+      if (request.apiKey() != null) {
+        ttsService.reload(voiceProperties);
+      }
       log.info("Updated ASR config");
     } finally {
       rwLock.writeLock().unlock();
@@ -517,6 +522,7 @@ public class LlmProviderConfigService {
   public void updateTtsConfig(TtsConfigRequest request) {
     rwLock.writeLock().lock();
     try {
+      VoiceInterviewProperties.AsrConfig asr = voiceProperties.getQwen().getAsr();
       VoiceInterviewProperties.QwenTtsConfig tts = voiceProperties.getQwen().getTts();
       if (request.model() != null) tts.setModel(request.model());
       if (request.voice() != null) tts.setVoice(request.voice());
@@ -528,11 +534,15 @@ public class LlmProviderConfigService {
       if (request.volume() != null) tts.setVolume(request.volume());
       if (request.apiKey() != null) {
         tts.setApiKey(request.apiKey());
+        asr.setApiKey(request.apiKey());
         updateEnvValue("AI_BAILIAN_API_KEY", request.apiKey());
       }
 
       writeTtsConfigToYaml(tts);
       ttsService.reload(voiceProperties);
+      if (request.apiKey() != null) {
+        asrService.reload(voiceProperties);
+      }
       log.info("Updated TTS config");
     } finally {
       rwLock.writeLock().unlock();

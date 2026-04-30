@@ -1,6 +1,6 @@
 import { useRef, useState, useEffect } from 'react';
 // @ts-ignore - vad is loaded via script tag
-import { Mic, MicOff, Volume2 } from 'lucide-react';
+import { Mic, MicOff } from 'lucide-react';
 
 // Declare global vad object (loaded via script tag in index.html)
 declare global {
@@ -41,6 +41,28 @@ export default function AudioRecorder({
   const vadRef = useRef<any>(null);
 
   // ✅ Helper functions defined BEFORE use
+  const TARGET_SAMPLE_RATE = 16000;
+
+  const resampleToTargetRate = (
+    inputData: Float32Array,
+    sourceSampleRate: number
+  ): Float32Array => {
+    if (sourceSampleRate === TARGET_SAMPLE_RATE) {
+      return inputData;
+    }
+
+    const ratio = sourceSampleRate / TARGET_SAMPLE_RATE;
+    const outputLength = Math.max(1, Math.round(inputData.length / ratio));
+    const output = new Float32Array(outputLength);
+    for (let i = 0; i < outputLength; i++) {
+      const sourceIndex = i * ratio;
+      const lower = Math.floor(sourceIndex);
+      const upper = Math.min(lower + 1, inputData.length - 1);
+      const weight = sourceIndex - lower;
+      output[i] = inputData[lower] * (1 - weight) + inputData[upper] * weight;
+    }
+    return output;
+  };
 
   /**
    * Convert Float32Array to Int16 PCM
@@ -99,7 +121,7 @@ export default function AudioRecorder({
       await vadInstance.start();
 
       // Step 3: Create AudioContext
-      const audioContext = new AudioContext({ sampleRate: 16000 });
+      const audioContext = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });
       const source = audioContext.createMediaStreamSource(stream);
 
       // Step 4: Create Analyser for volume monitoring
@@ -122,13 +144,14 @@ export default function AudioRecorder({
       const bufferSize = 4096;
       const scriptProcessor = audioContext.createScriptProcessor(bufferSize, 1, 1);
 
-      // Audio chunking (1 second at 16kHz)
-      const SAMPLES_PER_CHUNK = 16000;
+      // Audio chunking (200ms at 16kHz) keeps realtime ASR responsive.
+      const SAMPLES_PER_CHUNK = TARGET_SAMPLE_RATE / 5;
       let pendingPcm = new Int16Array(0);
 
       scriptProcessor.onaudioprocess = (e) => {
         const inputData = e.inputBuffer.getChannelData(0);
-        const pcmData = float32ToInt16Pcm(inputData);  // Use helper
+        const targetRateData = resampleToTargetRate(inputData, audioContext.sampleRate);
+        const pcmData = float32ToInt16Pcm(targetRateData);  // Use helper
 
         // Combine with pending data
         const combined = new Int16Array(pendingPcm.length + pcmData.length);

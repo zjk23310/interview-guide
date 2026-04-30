@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import InterviewMessageBubble from './InterviewMessageBubble';
 
@@ -21,48 +21,20 @@ export default function RealtimeSubtitle({
   aiText,
   isAiSpeaking
 }: RealtimeSubtitleProps) {
-  const [displayedAiText, setDisplayedAiText] = useState('');
-  const [isTyping, setIsTyping] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const activeAiText = displayedAiText || aiText;
+  const activeAiText = aiText.trim();
   const latestAiMessage = [...messages].reverse().find(msg => msg.role === 'ai');
   const shouldShowActiveAi =
     isAiSpeaking &&
     !!activeAiText &&
     latestAiMessage?.text.trim() !== activeAiText.trim();
 
-  // Typewriter effect for current AI text
-  useEffect(() => {
-    if (aiText && isAiSpeaking) {
-      setIsTyping(true);
-      setDisplayedAiText('');
-
-      let index = 0;
-      const speed = 25; // ms per character
-
-      const typeWriter = () => {
-        if (index < aiText.length) {
-          setDisplayedAiText(aiText.substring(0, index + 1));
-          index++;
-          setTimeout(typeWriter, speed);
-        } else {
-          setIsTyping(false);
-        }
-      };
-
-      typeWriter();
-    } else if (!aiText) {
-      setDisplayedAiText('');
-      setIsTyping(false);
-    }
-  }, [aiText, isAiSpeaking]);
-
   // Auto-scroll to bottom on new messages or text updates
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages, userText, displayedAiText]);
+  }, [messages, userText, activeAiText]);
 
   return (
     <div className="flex flex-col h-full bg-white dark:bg-slate-800 overflow-hidden">
@@ -103,18 +75,25 @@ export default function RealtimeSubtitle({
 
           {/* Current AI Response (Active) */}
           {shouldShowActiveAi && (
-            <InterviewMessageBubble
-              role="interviewer"
-              text={activeAiText}
-              highlight
-              suffix={isTyping ? (
-                <motion.span
-                  className="inline-block w-1 h-3.5 bg-primary-500 ml-1.5 translate-y-0.5 rounded-full"
-                  animate={{ opacity: [1, 0, 1] }}
-                  transition={{ duration: 0.8, repeat: Infinity }}
-                />
-              ) : null}
-            />
+            <motion.div
+              key="active-ai"
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+            >
+              <InterviewMessageBubble
+                role="interviewer"
+                text={activeAiText}
+                highlight
+                suffix={(
+                  <motion.span
+                    className="inline-block w-1.5 h-1.5 bg-primary-500 ml-1.5 rounded-full"
+                    animate={{ opacity: [1, 0.25, 1] }}
+                    transition={{ duration: 0.9, repeat: Infinity }}
+                  />
+                )}
+              />
+            </motion.div>
           )}
 
           {/* Current User Input (Real-time) */}

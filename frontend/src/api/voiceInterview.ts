@@ -105,6 +105,7 @@ export interface WebSocketAudioResponseMessage {
 export interface WebSocketTextMessage {
   type: 'text';
   content: string;
+  final?: boolean;
 }
 
 export interface WebSocketAudioChunkMessage {
@@ -126,6 +127,7 @@ export interface WebSocketEventHandlers {
   onMessage?: (message: WebSocketMessage) => void;
   onSubtitle?: (text: string, isFinal: boolean) => void;
   onAudioResponse?: (audioData: string, text: string) => void;
+  onTextResponse?: (text: string, isFinal: boolean) => void;
   onAudioChunk?: (data: string, index: number, isLast: boolean) => void;
   onOpen?: () => void;
   onClose?: (event: CloseEvent) => void;
@@ -280,9 +282,9 @@ export class VoiceInterviewWebSocket {
               }
               break;
             case 'text':
-              // Text-only message (when TTS fails)
               if ('content' in message) {
-                this.handlers.onAudioResponse?.('', (message as any).content);
+                const textMsg = message as WebSocketTextMessage;
+                this.handlers.onTextResponse?.(textMsg.content, !!textMsg.final);
               }
               break;
           }

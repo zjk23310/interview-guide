@@ -245,18 +245,50 @@ public class VoiceInterviewService {
             return;
         }
 
+        String normalizedUserText = normalizeBlankToNull(userText);
+        String normalizedAiText = normalizeBlankToNull(aiText);
+
+        boolean answerAttached = normalizedUserText != null
+            && fillLatestUnansweredQuestion(sessionIdLong, normalizedUserText);
+        if (normalizedAiText == null) {
+            return;
+        }
+
         VoiceInterviewMessageEntity message = VoiceInterviewMessageEntity.builder()
                 .sessionId(sessionIdLong)
                 .messageType("DIALOGUE")
                 .phase(session.getCurrentPhase())
-                .userRecognizedText(userText)
-                .aiGeneratedText(aiText)
+                .userRecognizedText(normalizedUserText != null && !answerAttached
+                    ? normalizedUserText
+                    : null)
+                .aiGeneratedText(normalizedAiText)
                 .sequenceNum(getNextSequenceNum(sessionIdLong))
                 .build();
 
         messageRepository.save(message);
         log.debug("Saved message for session: {}, phase: {}, sequence: {}",
                 sessionId, session.getCurrentPhase(), message.getSequenceNum());
+    }
+
+    private boolean fillLatestUnansweredQuestion(Long sessionId, String userText) {
+        return messageRepository
+            .findFirstBySessionIdAndUserRecognizedTextIsNullAndAiGeneratedTextIsNotNullOrderBySequenceNumDesc(
+                sessionId)
+            .map(message -> {
+                message.setUserRecognizedText(userText);
+                messageRepository.save(message);
+                log.debug("Filled answer for voice message: sessionId={}, sequence={}",
+                    sessionId, message.getSequenceNum());
+                return true;
+            })
+            .orElse(false);
+    }
+
+    private String normalizeBlankToNull(String text) {
+        if (text == null || text.isBlank()) {
+            return null;
+        }
+        return text.trim();
     }
 
     /**

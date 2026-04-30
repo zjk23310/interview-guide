@@ -95,24 +95,69 @@ public class VoiceInterviewEvaluationService {
     private List<QaRecord> buildQaRecords(List<VoiceInterviewMessageEntity> messages) {
         List<QaRecord> records = new ArrayList<>();
         int index = 0;
+        PendingQuestion pendingQuestion = null;
 
         for (VoiceInterviewMessageEntity msg : messages) {
-            String aiText = msg.getAiGeneratedText();
-            String userText = msg.getUserRecognizedText();
+            String aiText = trimToNull(msg.getAiGeneratedText());
+            String userText = trimToNull(msg.getUserRecognizedText());
 
-            if ((aiText != null && !aiText.isBlank()) || (userText != null && !userText.isBlank())) {
+            if (pendingQuestion != null && userText != null) {
                 records.add(new QaRecord(
                     index,
-                    aiText != null ? aiText.trim() : "",
-                    inferCategory(aiText),
-                    userText != null && !userText.isBlank() ? userText.trim() : null
+                    pendingQuestion.question(),
+                    pendingQuestion.category(),
+                    userText
                 ));
+                index++;
+                pendingQuestion = null;
+                if (aiText != null) {
+                    pendingQuestion = new PendingQuestion(aiText, inferCategory(aiText));
+                }
+                continue;
+            }
+
+            if (pendingQuestion != null) {
+                records.add(new QaRecord(
+                    index,
+                    pendingQuestion.question(),
+                    pendingQuestion.category(),
+                    null
+                ));
+                index++;
+                pendingQuestion = null;
+            }
+
+            if (aiText != null && userText != null) {
+                records.add(new QaRecord(index, aiText, inferCategory(aiText), userText));
+                index++;
+            } else if (aiText != null) {
+                pendingQuestion = new PendingQuestion(aiText, inferCategory(aiText));
+            } else if (userText != null) {
+                records.add(new QaRecord(index, "", "综合", userText));
                 index++;
             }
         }
 
+        if (pendingQuestion != null) {
+            records.add(new QaRecord(
+                index,
+                pendingQuestion.question(),
+                pendingQuestion.category(),
+                null
+            ));
+        }
+
         return records;
     }
+
+    private String trimToNull(String text) {
+        if (text == null || text.isBlank()) {
+            return null;
+        }
+        return text.trim();
+    }
+
+    private record PendingQuestion(String question, String category) {}
 
     private String inferCategory(String aiText) {
         if (aiText == null) return "综合";

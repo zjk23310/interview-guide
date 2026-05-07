@@ -18,7 +18,9 @@ import jakarta.annotation.PreDestroy;
 import java.util.Base64;
 import java.util.Collections;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
@@ -150,8 +152,17 @@ public class QwenAsrService {
             Consumer<String> onFinal,
             Consumer<String> onPartial,
             Consumer<Throwable> onError) {
+        startTranscription(sessionId, onFinal, onPartial, null, onError);
+    }
+
+    public void startTranscription(
+            String sessionId,
+            Consumer<String> onFinal,
+            Consumer<String> onPartial,
+            Runnable onReady,
+            Consumer<Throwable> onError) {
         synchronized (lockForSession(sessionId)) {
-            startTranscriptionLocked(sessionId, onFinal, onPartial, onError);
+            startTranscriptionLocked(sessionId, onFinal, onPartial, onReady, onError);
         }
     }
 
@@ -163,6 +174,15 @@ public class QwenAsrService {
             Consumer<String> onFinal,
             Consumer<String> onPartial,
             Consumer<Throwable> onError) {
+        restartTranscription(sessionId, onFinal, onPartial, null, onError);
+    }
+
+    public void restartTranscription(
+            String sessionId,
+            Consumer<String> onFinal,
+            Consumer<String> onPartial,
+            Runnable onReady,
+            Consumer<Throwable> onError) {
         synchronized (lockForSession(sessionId)) {
             log.info("[Session: {}] Restarting DashScope ASR (stop + start)", sessionId);
             stopTranscription(sessionId);
@@ -171,14 +191,14 @@ public class QwenAsrService {
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
-            startTranscriptionLocked(sessionId, onFinal, onPartial, onError);
+            startTranscriptionLocked(sessionId, onFinal, onPartial, onReady, onError);
 
             // Verify reconnection succeeded
             for (int attempt = 0; attempt < 10; attempt++) {
                 try {
                     Thread.sleep(100);
                     AsrSession newSession = sessions.get(sessionId);
-                    if (newSession != null && newSession.getConversation() != null) {
+                    if (newSession != null && newSession.isReady()) {
                         log.info("[Session: {}] ASR reconnection verified successfully", sessionId);
                         return;
                     }
@@ -197,6 +217,7 @@ public class QwenAsrService {
             String sessionId,
             Consumer<String> onFinal,
             Consumer<String> onPartial,
+            Runnable onReady,
             Consumer<Throwable> onError) {
         if (sessions.containsKey(sessionId)) {
             throw new IllegalStateException("Session already exists: " + sessionId);
@@ -242,9 +263,10 @@ public class QwenAsrService {
             // Create OmniRealtimeConversation instance
             OmniRealtimeConversation conversation = new OmniRealtimeConversation(param, callback);
             conversationRef.set(conversation);
+            AsrSession asrSession = new AsrSession(conversation, onFinal, onPartial, onError);
 
             // Store session in map BEFORE connecting to ensure hasActiveSession() returns true
-            sessions.put(sessionId, new AsrSession(conversation, onFinal, onPartial, onError));
+            sessions.put(sessionId, asrSession);
 
             // Connect to server asynchronously (non-blocking)
             Thread connectionThread = new Thread(() -> {
@@ -268,6 +290,14 @@ public class QwenAsrService {
 
                     // Update session with configuration
                     conversation.updateSession(config);
+                    if (sessions.get(sessionId) != asrSession) {
+                        log.debug("[Session: {}] Ignoring stale ASR connection ready callback", sessionId);
+                        return;
+                    }
+                    asrSession.markReady();
+                    if (onReady != null) {
+                        onReady.run();
+                    }
 
                     log.info("[Session: {}] Transcription session started successfully", sessionId);
 
@@ -311,6 +341,15 @@ public class QwenAsrService {
         AsrSession session = sessions.get(sessionId);
         if (session == null) {
             throw new IllegalStateException("No active session found: " + sessionId);
+        }
+
+        try {
+            if (!session.awaitReady(1200)) {
+                throw new IllegalStateException("ASR session not ready: " + sessionId);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("ASR session ready wait interrupted: " + sessionId, e);
         }
 
         try {
@@ -373,6 +412,11 @@ public class QwenAsrService {
      */
     public boolean hasActiveSession(String sessionId) {
         return sessions.containsKey(sessionId);
+    }
+
+    public boolean isReady(String sessionId) {
+        AsrSession session = sessions.get(sessionId);
+        return session != null && session.isReady();
     }
 
     /**
@@ -567,6 +611,7 @@ public class QwenAsrService {
         private final Consumer<String> onFinal;
         private final Consumer<String> onPartial;
         private final Consumer<Throwable> onError;
+        private final CountDownLatch readyLatch = new CountDownLatch(1);
 
         AsrSession(
                 OmniRealtimeConversation conversation,
@@ -585,6 +630,18 @@ public class QwenAsrService {
 
         public Consumer<Throwable> getOnError() {
             return onError;
+        }
+
+        void markReady() {
+            readyLatch.countDown();
+        }
+
+        boolean isReady() {
+            return readyLatch.getCount() == 0;
+        }
+
+        boolean awaitReady(long timeoutMs) throws InterruptedException {
+            return readyLatch.await(timeoutMs, TimeUnit.MILLISECONDS);
         }
     }
 

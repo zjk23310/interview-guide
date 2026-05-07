@@ -19,201 +19,49 @@ declare global {
 
 interface AudioRecorderProps {
   isRecording: boolean;
+  disabled?: boolean;
   onRecordingChange: (isRecording: boolean) => void;
   onAudioData: (audioData: string) => void;
-  onSpeechStart?: () => void;  // ✅ VAD callback
-  onSpeechEnd?: () => void;    // ✅ VAD callback
+  onSpeechStart?: () => void;
+  onSpeechEnd?: () => void;
 }
 
 export default function AudioRecorder({
   isRecording,
+  disabled = false,
   onRecordingChange,
   onAudioData,
   onSpeechStart,
   onSpeechEnd,
 }: AudioRecorderProps) {
   const [volume, setVolume] = useState(0);
-  const mediaRecorderRef = useRef<{ stop: () => void; stream: MediaStream } | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
-  const mediaStreamRef = useRef<MediaStream | null>(null);
   const vadRef = useRef<any>(null);
+  const workletNodeRef = useRef<AudioWorkletNode | null>(null);
+  const gainNodeRef = useRef<GainNode | null>(null);
+  // Mount flag to prevent operations after unmount
+  const mountedRef = useRef(true);
+  // Recording lifecycle flag for async callbacks while the component remains mounted.
+  const recordingActiveRef = useRef(false);
+  // Flag to track if we're in the middle of starting
+  const startingRef = useRef(false);
 
-  // ✅ Helper functions defined BEFORE use
   const TARGET_SAMPLE_RATE = 16000;
 
-  const resampleToTargetRate = (
-    inputData: Float32Array,
-    sourceSampleRate: number
-  ): Float32Array => {
-    if (sourceSampleRate === TARGET_SAMPLE_RATE) {
-      return inputData;
-    }
+  const cleanupRecordingResources = (updateVolume = true) => {
+    recordingActiveRef.current = false;
 
-    const ratio = sourceSampleRate / TARGET_SAMPLE_RATE;
-    const outputLength = Math.max(1, Math.round(inputData.length / ratio));
-    const output = new Float32Array(outputLength);
-    for (let i = 0; i < outputLength; i++) {
-      const sourceIndex = i * ratio;
-      const lower = Math.floor(sourceIndex);
-      const upper = Math.min(lower + 1, inputData.length - 1);
-      const weight = sourceIndex - lower;
-      output[i] = inputData[lower] * (1 - weight) + inputData[upper] * weight;
-    }
-    return output;
-  };
-
-  /**
-   * Convert Float32Array to Int16 PCM
-   */
-  const float32ToInt16Pcm = (inputData: Float32Array): Int16Array => {
-    const pcmData = new Int16Array(inputData.length);
-    for (let i = 0; i < inputData.length; i++) {
-      const s = Math.max(-1, Math.min(1, inputData[i]));
-      pcmData[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-    }
-    return pcmData;
-  };
-
-  /**
-   * Convert Int16Array to Base64
-   */
-  const int16ToBase64 = (pcmData: Int16Array): string => {
-    const bytes = new Uint8Array(pcmData.buffer, pcmData.byteOffset, pcmData.byteLength);
-    let binary = '';
-    for (let i = 0; i < bytes.length; i++) {
-      binary += String.fromCharCode(bytes[i]);
-    }
-    return btoa(binary);
-  };
-
-  const startRecording = async () => {
-    try {
-      // Step 1: Get microphone stream with echo cancellation
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,      // Echo cancellation
-          noiseSuppression: true,      // Noise suppression
-          autoGainControl: true,       // Auto gain
-          sampleRate: 16000,
-        },
-      });
-      mediaStreamRef.current = stream;
-
-      // Step 2: Initialize VAD with shared stream (using script-loaded bundle)
-      if (!window.vad || !window.vad.MicVAD) {
-        throw new Error('VAD library not loaded. Please refresh the page.');
-      }
-
-      const vadInstance = await window.vad.MicVAD.new({
-        getStream: async () => stream,  // Share same MediaStream
-        onnxWASMBasePath: 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/',
-        baseAssetPath: 'https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.29/dist/',
-        onSpeechStart: () => {
-          onSpeechStart?.();
-        },
-        onSpeechEnd: () => {
-          onSpeechEnd?.();
-        },
-      });
-      vadRef.current = vadInstance;
-      await vadInstance.start();
-
-      // Step 3: Create AudioContext
-      const audioContext = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });
-      const source = audioContext.createMediaStreamSource(stream);
-
-      // Step 4: Create Analyser for volume monitoring
-      const analyser = audioContext.createAnalyser();
-      analyser.fftSize = 256;
-      source.connect(analyser);  // Connect for volume display
-
-      audioContextRef.current = audioContext;
-      analyserRef.current = analyser;
-
-      // Volume monitoring
-      const dataArray = new Uint8Array(analyser.frequencyBinCount);
-      intervalRef.current = setInterval(() => {
-        analyser.getByteFrequencyData(dataArray);
-        const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
-        setVolume(average);
-      }, 100);
-
-      // Step 5: Create ScriptProcessor for audio capture
-      const bufferSize = 4096;
-      const scriptProcessor = audioContext.createScriptProcessor(bufferSize, 1, 1);
-
-      // Audio chunking (200ms at 16kHz) keeps realtime ASR responsive.
-      const SAMPLES_PER_CHUNK = TARGET_SAMPLE_RATE / 5;
-      let pendingPcm = new Int16Array(0);
-
-      scriptProcessor.onaudioprocess = (e) => {
-        const inputData = e.inputBuffer.getChannelData(0);
-        const targetRateData = resampleToTargetRate(inputData, audioContext.sampleRate);
-        const pcmData = float32ToInt16Pcm(targetRateData);  // Use helper
-
-        // Combine with pending data
-        const combined = new Int16Array(pendingPcm.length + pcmData.length);
-        combined.set(pendingPcm, 0);
-        combined.set(pcmData, pendingPcm.length);
-
-        // Send chunks
-        let read = 0;
-        while (combined.length - read >= SAMPLES_PER_CHUNK) {
-          const chunk = combined.subarray(read, read + SAMPLES_PER_CHUNK);
-          read += SAMPLES_PER_CHUNK;
-
-          const base64 = int16ToBase64(chunk);  // Use helper
-          onAudioData(base64);
-        }
-
-        pendingPcm = combined.subarray(read);
-      };
-
-      // Step 6: Connect audio processing chain
-      // Create gain node to mute output (prevent echo)
-      const gainNode = audioContext.createGain();
-      gainNode.gain.value = 0;  // Mute the output
-
-      source.connect(scriptProcessor);
-      scriptProcessor.connect(gainNode);
-      gainNode.connect(audioContext.destination);  // MUST connect to destination for onaudioprocess to fire
-
-      mediaRecorderRef.current = {
-        stop: () => {
-          scriptProcessor.disconnect();
-          source.disconnect();
-          gainNode.disconnect();
-          stream.getTracks().forEach(track => track.stop());
-        },
-        stream: stream
-      };
-
-      onRecordingChange(true);
-
-    } catch (error) {
-      console.error('Error accessing microphone:', error);
-      alert('无法访问麦克风，请检查权限设置');
-    }
-  };
-
-  const stopRecording = () => {
-    // Stop VAD
     if (vadRef.current) {
-      vadRef.current.pause();
-    }
-
-    // Stop MediaStream
-    if (mediaStreamRef.current) {
-      mediaStreamRef.current.getTracks().forEach(track => track.stop());
-      mediaStreamRef.current = null;
-    }
-
-    // Close AudioContext
-    if (audioContextRef.current) {
-      audioContextRef.current.close();
-      audioContextRef.current = null;
+      try {
+        vadRef.current.pause();
+        vadRef.current.destroy?.();
+      } catch (e) {
+        // Ignore cleanup errors
+      }
+      vadRef.current = null;
     }
 
     if (intervalRef.current) {
@@ -221,17 +69,240 @@ export default function AudioRecorder({
       intervalRef.current = null;
     }
 
-    setVolume(0);
-    onRecordingChange(false);
+    if (workletNodeRef.current) {
+      try {
+        workletNodeRef.current.port.onmessage = null;
+        workletNodeRef.current.disconnect();
+      } catch (e) {
+        // Ignore disconnect errors
+      }
+      workletNodeRef.current = null;
+    }
+
+    if (gainNodeRef.current) {
+      try {
+        gainNodeRef.current.disconnect();
+      } catch (e) {
+        // Ignore disconnect errors
+      }
+      gainNodeRef.current = null;
+    }
+
+    if (analyserRef.current) {
+      try {
+        analyserRef.current.disconnect();
+      } catch (e) {
+        // Ignore disconnect errors
+      }
+      analyserRef.current = null;
+    }
+
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach(track => track.stop());
+      mediaStreamRef.current = null;
+    }
+
+    if (audioContextRef.current) {
+      try {
+        audioContextRef.current.close();
+      } catch (e) {
+        // Ignore close errors
+      }
+      audioContextRef.current = null;
+    }
+
+    if (updateVolume) {
+      setVolume(0);
+    }
+  };
+
+  /**
+   * Convert ArrayBuffer (Int16 PCM) to Base64
+   */
+  const arrayBufferToBase64 = (buffer: ArrayBuffer): string => {
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    const chunkSize = 0x8000;
+
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      const chunk = bytes.subarray(i, i + chunkSize);
+      binary += String.fromCharCode(...chunk);
+    }
+
+    return btoa(binary);
+  };
+
+  const startRecording = async () => {
+    // Prevent multiple concurrent starts
+    if (startingRef.current) {
+      return;
+    }
+    startingRef.current = true;
+
+    try {
+      if (!window.AudioContext) {
+        throw new Error('当前浏览器不支持 AudioWorklet，请使用新版 Chrome/Edge');
+      }
+
+      // Step 1: Get microphone stream
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          sampleRate: TARGET_SAMPLE_RATE,
+        },
+      });
+
+      // Check if unmounted during async operation
+      if (!mountedRef.current) {
+        stream.getTracks().forEach(track => track.stop());
+        startingRef.current = false;
+        return;
+      }
+      mediaStreamRef.current = stream;
+
+      // Step 2: Initialize VAD with shared stream
+      if (!window.vad || !window.vad.MicVAD) {
+        throw new Error('VAD library not loaded. Please refresh the page.');
+      }
+
+      const vadInstance = await window.vad.MicVAD.new({
+        getStream: async () => stream,
+        onnxWASMBasePath: 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/',
+        baseAssetPath: 'https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.29/dist/',
+        onSpeechStart: () => {
+          if (mountedRef.current) {
+            onSpeechStart?.();
+          }
+        },
+        onSpeechEnd: () => {
+          if (mountedRef.current) {
+            onSpeechEnd?.();
+          }
+        },
+      });
+      vadRef.current = vadInstance;
+      await vadInstance.start();
+
+      // Check if unmounted during async operation
+      if (!mountedRef.current) {
+        cleanupRecordingResources(false);
+        startingRef.current = false;
+        return;
+      }
+
+      // Step 3: Create AudioContext
+      const audioContext = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });
+      if (!audioContext.audioWorklet) {
+        await audioContext.close();
+        throw new Error('当前浏览器不支持 AudioWorklet，请使用新版 Chrome/Edge');
+      }
+      const source = audioContext.createMediaStreamSource(stream);
+
+      // Step 4: Create Analyser for volume monitoring
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = 256;
+      source.connect(analyser);
+
+      audioContextRef.current = audioContext;
+      analyserRef.current = analyser;
+
+      // Volume monitoring
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+      intervalRef.current = setInterval(() => {
+        if (!mountedRef.current || !analyserRef.current) {
+          return;
+        }
+        analyser.getByteFrequencyData(dataArray);
+        const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
+        setVolume(average);
+      }, 100);
+
+      // Step 5: Load AudioWorklet processor
+      const workletPath = '/audio-worklet/pcm-processor.js';
+      await audioContext.audioWorklet.addModule(workletPath);
+
+      // Check if unmounted during async operation
+      if (!mountedRef.current) {
+        cleanupRecordingResources(false);
+        startingRef.current = false;
+        return;
+      }
+
+      // Step 6: Create AudioWorkletNode
+      const workletNode = new AudioWorkletNode(audioContext, 'pcm-processor');
+      workletNodeRef.current = workletNode;
+      recordingActiveRef.current = true;
+
+      // Handle audio chunks from worklet
+      workletNode.port.onmessage = (event) => {
+        if (!mountedRef.current || !recordingActiveRef.current || !workletNodeRef.current) {
+          return;
+        }
+        const buffer = event.data as ArrayBuffer;
+        const base64 = arrayBufferToBase64(buffer);
+        onAudioData(base64);
+      };
+
+      // Step 7: Create gain node to prevent echo
+      const gainNode = audioContext.createGain();
+      gainNode.gain.value = 0; // Mute output
+      gainNodeRef.current = gainNode;
+
+      // Step 8: Connect audio processing chain
+      source.connect(workletNode);
+      workletNode.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+
+      startingRef.current = false;
+      if (mountedRef.current) {
+        onRecordingChange(true);
+      }
+
+    } catch (error) {
+      startingRef.current = false;
+      cleanupRecordingResources(mountedRef.current);
+      if (!mountedRef.current) {
+        return;
+      }
+      console.error('Error accessing microphone:', error);
+      const message = error instanceof Error ? error.message : '无法访问麦克风，请检查权限设置';
+      alert(message);
+    }
+  };
+
+  const stopRecording = () => {
+    // Prevent stop during start
+    startingRef.current = false;
+    cleanupRecordingResources(mountedRef.current);
+    // Only call onRecordingChange if we were recording
+    if (isRecording) {
+      onRecordingChange(false);
+    }
   };
 
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
       stopRecording();
     };
   }, []);
 
+  useEffect(() => {
+    if ((disabled || !isRecording) && recordingActiveRef.current) {
+      cleanupRecordingResources(mountedRef.current);
+      if (isRecording) {
+        onRecordingChange(false);
+      }
+    }
+  }, [disabled, isRecording, onRecordingChange]);
+
   const toggleRecording = () => {
+    if (disabled && !isRecording) {
+      return;
+    }
     if (isRecording) {
       stopRecording();
     } else {
@@ -256,15 +327,17 @@ export default function AudioRecorder({
       {/* Record button */}
       <button
         onClick={toggleRecording}
+        disabled={disabled && !isRecording}
         className={`
           relative z-10 w-16 h-16 rounded-full flex items-center justify-center
           transition-all duration-300 shadow-xl
+          ${disabled && !isRecording ? 'opacity-50 cursor-not-allowed shadow-none' : ''}
           ${isRecording
             ? 'bg-primary-500 hover:bg-primary-600 shadow-primary-500/40'
             : 'bg-slate-700 hover:bg-slate-600 shadow-slate-900/50'
           }
         `}
-        title={isRecording ? '停止录音' : '开始说话'}
+        title={disabled && !isRecording ? '语音识别准备中' : isRecording ? '停止录音' : '开始说话'}
       >
         {isRecording ? (
           <Mic className="w-7 h-7 text-white" />

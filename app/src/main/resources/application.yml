@@ -263,6 +263,12 @@ app:
     max-wait-for-continuation-ms: ${APP_VOICE_MAX_WAIT_FOR_CONTINUATION_MS:7000}
     # 语音面试单轮面试官回复最大长度（字符）
     ai-question-max-chars: ${APP_VOICE_AI_QUESTION_MAX_CHARS:120}
+    # 是否按句子边合成边推送语音；开启后首段语音不用等待完整回复生成结束
+    chunked-audio-enabled: ${APP_VOICE_CHUNKED_AUDIO_ENABLED:true}
+    # 单句 TTS 合成超时，避免某一句卡住整轮播放
+    tts-timeout-seconds: ${APP_VOICE_TTS_TIMEOUT_SECONDS:8}
+    # 单会话并发 TTS 上限，控制首段语音速度和服务连接压力
+    max-concurrent-tts-per-session: ${APP_VOICE_MAX_CONCURRENT_TTS_PER_SESSION:3}
 
     # Rate limiting
     rate-limit:

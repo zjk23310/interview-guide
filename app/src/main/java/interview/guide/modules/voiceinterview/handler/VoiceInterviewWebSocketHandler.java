@@ -39,6 +39,7 @@ import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -86,6 +87,8 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
     private static final int WS_SEND_BUFFER_LIMIT_BYTES = 512 * 1024;
     /** AI 音频播放结束后的冷却期，防止扬声器尾音被麦克风拾取触发 STT */
     private static final long AI_SPEAK_COOLDOWN_MS = 800;
+    private static final int MAX_ASR_READY_RETRY = 2;
+    private static final long ASR_READY_CHECK_DELAY_SECONDS = 10;
     private static final String DEFAULT_OPENING_QUESTION_ALGORITHM =
         "你好，我是本场面试官。第一个问题：请你口述一道算法题，不写代码，只讲\u300C问题建模、数据结构选型、步骤、复杂度、边界处理\u300D。";
     private static final String DEFAULT_OPENING_QUESTION_BACKEND =
@@ -300,18 +303,21 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
     protected void handleTextMessage(WebSocketSession session, TextMessage message) throws Exception {
         String sessionId = extractSessionId(session);
 
-        int messageSize = message.getPayload().length();
-        int messageSizeKB = messageSize / 1024;
-        log.info("[WebSocket] Received message: sessionId={}, size={}KB ({} bytes), limit={}KB",
-                sessionId, messageSizeKB, messageSize, session.getTextMessageSizeLimit() / 1024);
-
-        if (messageSizeKB > 200) {
-            log.warn("[WebSocket] Large message detected: {}KB", messageSizeKB);
-        }
-
         try {
             JsonNode msg = objectMapper.readTree(message.getPayload());
             String type = msg.get("type").asText();
+            int messageSize = message.getPayload().length();
+            int messageSizeKB = messageSize / 1024;
+            if ("audio".equals(type)) {
+                log.trace("[WebSocket] Received audio: sessionId={}, size={}KB", sessionId, messageSizeKB);
+            } else {
+                log.info("[WebSocket] Received message: sessionId={}, type={}, size={}KB ({} bytes)",
+                    sessionId, type, messageSizeKB, messageSize);
+            }
+
+            if (messageSizeKB > 200) {
+                log.warn("[WebSocket] Large message detected: {}KB", messageSizeKB);
+            }
 
             // Update last activity time for pause timeout detection
             // 更新最后活动时间（用于暂停超时检测）
@@ -400,16 +406,51 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
         return m.contains("No active session") || m.contains("ASR append failed");
     }
 
+    private static boolean isAsrNotReady(IllegalStateException ex) {
+        String m = ex.getMessage();
+        return m != null && m.contains("ASR session not ready");
+    }
+
     private void startDashScopeStt(String sessionId, WebSocketSession session) {
         sttService.startTranscription(
                 sessionId,
                 text -> handleSttResult(sessionId, text, true),
                 text -> handleSttResult(sessionId, text, false),
+                () -> sendAsrReady(session),
                 error -> {
                     log.error("STT error for session {}", sessionId, error);
                     sendError(session, "语音识别失败: " + error.getMessage());
                 }
         );
+
+        scheduleAsrReadyCheck(sessionId, session, 0);
+    }
+
+    private void scheduleAsrReadyCheck(String sessionId, WebSocketSession session, int retryCount) {
+        utteranceMergeScheduler.schedule(
+            () -> checkAsrReadyOrRetry(sessionId, session, retryCount),
+            ASR_READY_CHECK_DELAY_SECONDS,
+            TimeUnit.SECONDS
+        );
+    }
+
+    private void checkAsrReadyOrRetry(String sessionId, WebSocketSession session, int retryCount) {
+        if (session == null || !session.isOpen() || sttService.isReady(sessionId)) {
+            return;
+        }
+
+        if (retryCount < MAX_ASR_READY_RETRY) {
+            int nextRetry = retryCount + 1;
+            log.warn("[Session: {}] ASR not ready after {}s, retrying ({}/{})",
+                sessionId, ASR_READY_CHECK_DELAY_SECONDS, nextRetry, MAX_ASR_READY_RETRY);
+            sendAsrStatus(session, "asr_reconnecting", "语音识别连接较慢，正在自动重连");
+            restartDashScopeStt(sessionId);
+            scheduleAsrReadyCheck(sessionId, session, nextRetry);
+            return;
+        }
+
+        log.warn("[Session: {}] ASR still not ready after {} retries", sessionId, retryCount);
+        sendError(session, "语音识别连接准备超时，请检查语音服务配置或稍后重试");
     }
 
     /**
@@ -424,6 +465,7 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
                 sessionId,
                 text -> handleSttResult(sessionId, text, true),
                 text -> handleSttResult(sessionId, text, false),
+                () -> sendAsrReady(session),
                 error -> {
                     log.error("STT error for session {}", sessionId, error);
                     sendError(session, "语音识别失败: " + error.getMessage());
@@ -455,7 +497,10 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
             try {
                 sttService.sendAudio(sessionId, audioData);
             } catch (IllegalStateException ex) {
-                if (shouldRecoverAsrConnection(ex)) {
+                if (isAsrNotReady(ex)) {
+                    log.debug("[Session: {}] Dropping audio chunk before ASR ready", sessionId);
+                    return;
+                } else if (shouldRecoverAsrConnection(ex)) {
                     log.warn("[Session: {}] ASR send failed ({}), restarting DashScope and retrying chunk",
                             sessionId, ex.getMessage() != null ? ex.getMessage() : "unknown");
                     restartDashScopeStt(sessionId);
@@ -467,6 +512,9 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
                             sent = true;
                             break;
                         } catch (IllegalStateException retry) {
+                            if (isAsrNotReady(retry)) {
+                                continue;
+                            }
                             if (!shouldRecoverAsrConnection(retry)) {
                                 throw retry;
                             }
@@ -602,6 +650,11 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
                 // 句子级并发 TTS：LLM 流式输出期间每检测到一个完整句子就启动 TTS
                 Semaphore ttsSemaphore = new Semaphore(
                     Math.max(1, voiceInterviewProperties.getMaxConcurrentTtsPerSession()));
+                boolean chunkedEnabled = voiceInterviewProperties.isChunkedAudioEnabled();
+                long ttsTimeoutSec = Math.max(5, voiceInterviewProperties.getTtsTimeoutSeconds());
+                OrderedTtsChunkEmitter chunkEmitter = chunkedEnabled
+                    ? new OrderedTtsChunkEmitter(sessionId, session, ttsSemaphore, ttsTimeoutSec)
+                    : null;
                 List<CompletableFuture<byte[]>> ttsFutures = new ArrayList<>();
 
                 aiReply = llmService.chatStreamSentences(
@@ -621,6 +674,10 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
                     },
                     sentence -> {
                         if (sentence == null || sentence.isBlank()) {
+                            return;
+                        }
+                        if (chunkEmitter != null) {
+                            chunkEmitter.submit(sentence);
                             return;
                         }
                         ttsSemaphore.acquireUninterruptibly();
@@ -651,86 +708,83 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
                 saveMessage(sessionId, userText, aiReply);
 
                 // 按顺序收集所有 TTS 结果（带超时，防止单句 TTS 挂死阻塞整条管道）
-                if (!ttsFutures.isEmpty()) {
+                if (chunkEmitter != null) {
                     long ttsStartNanos = System.nanoTime();
-                    boolean chunkedEnabled = voiceInterviewProperties.isChunkedAudioEnabled();
-                    long ttsTimeoutSec = Math.max(5, voiceInterviewProperties.getTtsTimeoutSeconds());
-
-                    if (chunkedEnabled) {
-                        // 分块推送模式：每句 TTS 完成后立即推送
-                        for (int i = 0; i < ttsFutures.size(); i++) {
-                            try {
-                                byte[] pcm = ttsFutures.get(i).get(ttsTimeoutSec, TimeUnit.SECONDS);
-                                if (pcm != null && pcm.length > 0 && session.isOpen()) {
-                                    byte[] wavAudio = convertPcmToWav(pcm);
-                                    sendAudioChunk(session, wavAudio, i, i == ttsFutures.size() - 1);
-                                }
-                            } catch (Exception e) {
-                                ttsFutures.get(i).cancel(true);
-                                log.warn("[Session: {}] TTS chunk {} failed: {}", sessionId, i, e.getMessage());
+                    chunkEmitter.finish();
+                    int emittedChunks = chunkEmitter.awaitCompletion();
+                    recordTimerSinceNanos("app.voice.interview.tts.duration", ttsStartNanos, "status", "success");
+                    if (emittedChunks == 0 && session.isOpen()) {
+                        log.info("[Session: {}] Streaming TTS produced no chunks, falling back to full-text TTS",
+                            sessionId);
+                        try {
+                            byte[] fallbackPcm = ttsService.synthesize(aiReply);
+                            if (fallbackPcm != null && fallbackPcm.length > 0) {
+                                sendAudio(session, convertPcmToWav(fallbackPcm), aiReply);
                             }
+                        } catch (Exception e) {
+                            log.warn("[Session: {}] Fallback TTS failed: {}", sessionId, e.getMessage());
                         }
-                        recordTimerSinceNanos("app.voice.interview.tts.duration", ttsStartNanos, "status", "success");
-                    } else {
-                        // 合并模式：收集所有 PCM 后合并为一个完整音频
-                        List<byte[]> pcmChunks = new ArrayList<>();
-                        int totalSize = 0;
-                        int failedCount = 0;
-                        boolean audioSentByFallback = false;
-                        for (CompletableFuture<byte[]> f : ttsFutures) {
-                            try {
-                                byte[] pcm = f.get(ttsTimeoutSec, TimeUnit.SECONDS);
-                                if (pcm != null && pcm.length > 0) {
-                                    pcmChunks.add(pcm);
-                                    totalSize += pcm.length;
-                                }
-                            } catch (Exception e) {
-                                f.cancel(true);
-                                failedCount++;
-                                log.warn("[Session: {}] TTS future failed for one sentence: {}", sessionId, e.getMessage());
+                    }
+                } else if (!ttsFutures.isEmpty()) {
+                    long ttsStartNanos = System.nanoTime();
+                    // 合并模式：收集所有 PCM 后合并为一个完整音频
+                    List<byte[]> pcmChunks = new ArrayList<>();
+                    int totalSize = 0;
+                    int failedCount = 0;
+                    boolean audioSentByFallback = false;
+                    for (CompletableFuture<byte[]> f : ttsFutures) {
+                        try {
+                            byte[] pcm = f.get(ttsTimeoutSec, TimeUnit.SECONDS);
+                            if (pcm != null && pcm.length > 0) {
+                                pcmChunks.add(pcm);
+                                totalSize += pcm.length;
                             }
+                        } catch (Exception e) {
+                            f.cancel(true);
+                            failedCount++;
+                            log.warn("[Session: {}] TTS future failed for one sentence: {}", sessionId, e.getMessage());
                         }
-                        recordTimerSinceNanos("app.voice.interview.tts.duration", ttsStartNanos, "status", "success");
+                    }
+                    recordTimerSinceNanos("app.voice.interview.tts.duration", ttsStartNanos, "status", "success");
 
-                        if (!session.isOpen()) {
-                            log.warn("WebSocket closed during TTS processing, discarding audio for session {}", sessionId);
-                            return;
-                        }
+                    if (!session.isOpen()) {
+                        log.warn("WebSocket closed during TTS processing, discarding audio for session {}", sessionId);
+                        return;
+                    }
 
-                        // 有句子级 TTS 失败且无成功结果时，用完整文本做一次兜底 TTS
-                        if (totalSize == 0 && failedCount > 0 && session.isOpen()) {
-                            log.info("[Session: {}] All {} sentence TTS calls failed, falling back to full-text TTS",
-                                sessionId, failedCount);
-                            try {
-                                byte[] fallbackPcm = ttsService.synthesize(aiReply);
-                                if (fallbackPcm != null && fallbackPcm.length > 0) {
-                                    byte[] wavAudio = convertPcmToWav(fallbackPcm);
-                                    log.info("[Session: {}] Fallback TTS succeeded, WAV size: {} bytes",
-                                        sessionId, wavAudio.length);
-                                    sendAudio(session, wavAudio, aiReply);
-                                    audioSentByFallback = true;
-                                }
-                            } catch (Exception e) {
-                                log.warn("[Session: {}] Fallback TTS also failed: {}", sessionId, e.getMessage());
-                            }
-                        }
-
-                        if (!audioSentByFallback) {
-                            if (totalSize > 0 && session.isOpen()) {
-                                byte[] mergedPcm = new byte[totalSize];
-                                int offset = 0;
-                                for (byte[] chunk : pcmChunks) {
-                                    System.arraycopy(chunk, 0, mergedPcm, offset, chunk.length);
-                                    offset += chunk.length;
-                                }
-                                byte[] wavAudio = convertPcmToWav(mergedPcm);
-                                log.info("[Session: {}] Sending merged audio - {} sentences, WAV size: {} bytes",
-                                    sessionId, pcmChunks.size(), wavAudio.length);
+                    // 有句子级 TTS 失败且无成功结果时，用完整文本做一次兜底 TTS
+                    if (totalSize == 0 && failedCount > 0 && session.isOpen()) {
+                        log.info("[Session: {}] All {} sentence TTS calls failed, falling back to full-text TTS",
+                            sessionId, failedCount);
+                        try {
+                            byte[] fallbackPcm = ttsService.synthesize(aiReply);
+                            if (fallbackPcm != null && fallbackPcm.length > 0) {
+                                byte[] wavAudio = convertPcmToWav(fallbackPcm);
+                                log.info("[Session: {}] Fallback TTS succeeded, WAV size: {} bytes",
+                                    sessionId, wavAudio.length);
                                 sendAudio(session, wavAudio, aiReply);
-                            } else {
-                                log.error("[Session: {}] All TTS calls returned empty audio", sessionId);
-                                incrementCounter("app.voice.interview.tts.empty_audio", "status", "empty");
+                                audioSentByFallback = true;
                             }
+                        } catch (Exception e) {
+                            log.warn("[Session: {}] Fallback TTS also failed: {}", sessionId, e.getMessage());
+                        }
+                    }
+
+                    if (!audioSentByFallback) {
+                        if (totalSize > 0 && session.isOpen()) {
+                            byte[] mergedPcm = new byte[totalSize];
+                            int offset = 0;
+                            for (byte[] chunk : pcmChunks) {
+                                System.arraycopy(chunk, 0, mergedPcm, offset, chunk.length);
+                                offset += chunk.length;
+                            }
+                            byte[] wavAudio = convertPcmToWav(mergedPcm);
+                            log.info("[Session: {}] Sending merged audio - {} sentences, WAV size: {} bytes",
+                                sessionId, pcmChunks.size(), wavAudio.length);
+                            sendAudio(session, wavAudio, aiReply);
+                        } else {
+                            log.error("[Session: {}] All TTS calls returned empty audio", sessionId);
+                            incrementCounter("app.voice.interview.tts.empty_audio", "status", "empty");
                         }
                     }
                 }
@@ -877,6 +931,22 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
         sendMessage(session, toJson(Map.of("type", "error", "message", error)));
     }
 
+    private void sendAsrReady(WebSocketSession session) {
+        sendAsrStatus(session, "asr_ready", "语音识别已就绪");
+    }
+
+    private void sendAsrStatus(WebSocketSession session, String action, String message) {
+        if (session == null || !session.isOpen()) {
+            return;
+        }
+        sendMessage(session, toJson(Map.of(
+            "type", "control",
+            "action", action,
+            "message", message,
+            "timestamp", System.currentTimeMillis()
+        )));
+    }
+
     private void sendAudioChunk(WebSocketSession session, byte[] wavAudio, int index, boolean isLast) {
         if (!session.isOpen()) {
             return;
@@ -889,6 +959,135 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
                 "isLast", isLast
         )));
         log.debug("[Session] Sent audio chunk index={}, isLast={}, size={} bytes", index, isLast, wavAudio.length);
+    }
+
+    private void sendAudioComplete(WebSocketSession session) {
+        if (session == null || !session.isOpen()) {
+            return;
+        }
+        sendMessage(session, toJson(Map.of(
+            "type", "control",
+            "action", "audio_complete",
+            "message", "面试官语音播放完成",
+            "timestamp", System.currentTimeMillis()
+        )));
+    }
+
+    private class OrderedTtsChunkEmitter {
+
+        private final String sessionId;
+        private final WebSocketSession session;
+        private final Semaphore ttsSemaphore;
+        private final long ttsTimeoutSec;
+        private final Map<Integer, CompletableFuture<byte[]>> futures = new ConcurrentHashMap<>();
+        private final AtomicInteger nextIndex = new AtomicInteger();
+        private final AtomicInteger emittedChunks = new AtomicInteger();
+        private final Object lock = new Object();
+        private final CompletableFuture<Integer> completion;
+        private volatile int totalChunks = -1;
+
+        OrderedTtsChunkEmitter(
+                String sessionId,
+                WebSocketSession session,
+                Semaphore ttsSemaphore,
+                long ttsTimeoutSec) {
+            this.sessionId = sessionId;
+            this.session = session;
+            this.ttsSemaphore = ttsSemaphore;
+            this.ttsTimeoutSec = ttsTimeoutSec;
+            this.completion = CompletableFuture.supplyAsync(this::drainChunks, voicePipelineExecutor);
+        }
+
+        void submit(String sentence) {
+            int index = nextIndex.getAndIncrement();
+            ttsSemaphore.acquireUninterruptibly();
+            CompletableFuture<byte[]> future = CompletableFuture.supplyAsync(() -> {
+                try {
+                    return ttsService.synthesize(sentence);
+                } finally {
+                    ttsSemaphore.release();
+                }
+            }, voicePipelineExecutor);
+
+            futures.put(index, future);
+            synchronized (lock) {
+                lock.notifyAll();
+            }
+        }
+
+        void finish() {
+            synchronized (lock) {
+                totalChunks = nextIndex.get();
+                lock.notifyAll();
+            }
+        }
+
+        int awaitCompletion() {
+            long timeoutSec = Math.max(ttsTimeoutSec + 2, (ttsTimeoutSec + 1) * Math.max(1, nextIndex.get()));
+            try {
+                return completion.get(timeoutSec, TimeUnit.SECONDS);
+            } catch (Exception e) {
+                log.warn("[Session: {}] Streaming TTS chunk emitter did not finish cleanly: {}",
+                    sessionId, e.getMessage());
+                completion.cancel(true);
+                int emitted = emittedChunks.get();
+                if (emitted > 0) {
+                    sendAudioComplete(session);
+                }
+                return emitted;
+            }
+        }
+
+        private int drainChunks() {
+            int index = 0;
+            try {
+                while (true) {
+                    CompletableFuture<byte[]> future = waitForFuture(index);
+                    if (future == null) {
+                        int emitted = emittedChunks.get();
+                        if (emitted > 0) {
+                            sendAudioComplete(session);
+                        }
+                        return emitted;
+                    }
+
+                    try {
+                        byte[] pcm = future.get(ttsTimeoutSec, TimeUnit.SECONDS);
+                        if (pcm != null && pcm.length > 0 && session.isOpen()) {
+                            sendAudioChunk(session, convertPcmToWav(pcm), index, false);
+                            emittedChunks.incrementAndGet();
+                        }
+                    } catch (Exception e) {
+                        future.cancel(true);
+                        log.warn("[Session: {}] Streaming TTS chunk {} failed: {}",
+                            sessionId, index, e.getMessage());
+                    } finally {
+                        futures.remove(index);
+                        index++;
+                    }
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                log.warn("[Session: {}] Streaming TTS chunk emitter interrupted", sessionId);
+                int emitted = emittedChunks.get();
+                if (emitted > 0) {
+                    sendAudioComplete(session);
+                }
+                return emitted;
+            }
+        }
+
+        private CompletableFuture<byte[]> waitForFuture(int index) throws InterruptedException {
+            synchronized (lock) {
+                while (!futures.containsKey(index)) {
+                    if (totalChunks >= 0 && index >= totalChunks) {
+                        return null;
+                    }
+                    lock.wait(100);
+                }
+                return futures.get(index);
+            }
+        }
     }
 
     private void recordTimerSinceNanos(String metricName, long startNanos, String... tags) {

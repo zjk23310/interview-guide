@@ -46,7 +46,7 @@ public class VoiceInterviewProperties {
     /**
      * 是否启用分块音频推送（每句 TTS 完成后立即推送，不等全部完成）。
      */
-    private boolean chunkedAudioEnabled = false;
+    private boolean chunkedAudioEnabled = true;
     /**
      * 单句 TTS 合成超时（秒），超时后跳过该句，用已成功的句子拼合音频。
      */

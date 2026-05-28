@@ -49,6 +49,7 @@ public class LlmProviderRegistry {
 
     private final LlmProviderProperties properties;
     private final Map<String, ChatClient> clientCache = new ConcurrentHashMap<>();
+    private final Map<String, OpenAiChatModel> chatModelCache = new ConcurrentHashMap<>();
     private final Map<String, EmbeddingModel> embeddingModelCache = new ConcurrentHashMap<>();
     private final LlmProviderRepository providerRepository;
     private final LlmGlobalSettingRepository globalSettingRepository;
@@ -147,8 +148,9 @@ public class LlmProviderRegistry {
      * 清空缓存，重新加载所有 provider。
      */
     public void reload() {
-        int size = clientCache.size() + embeddingModelCache.size();
+        int size = clientCache.size() + chatModelCache.size() + embeddingModelCache.size();
         clientCache.clear();
+        chatModelCache.clear();
         embeddingModelCache.clear();
         log.info("[LlmProviderRegistry] Cache cleared ({} entries). Next access will re-create clients.", size);
     }
@@ -165,7 +167,7 @@ public class LlmProviderRegistry {
     }
 
     private ChatClient createChatClient(String providerId) {
-        OpenAiChatModel chatModel = buildChatModel(providerId);
+        OpenAiChatModel chatModel = getChatModel(providerId);
 
         ChatClient.Builder builder = ChatClient.builder(chatModel);
         if (interviewSkillsToolCallback != null) {
@@ -181,7 +183,7 @@ public class LlmProviderRegistry {
     }
 
     private ChatClient createPlainChatClient(String providerId) {
-        OpenAiChatModel chatModel = buildChatModel(providerId);
+        OpenAiChatModel chatModel = getChatModel(providerId);
         ChatClient.Builder builder = ChatClient.builder(chatModel);
         buildSafeGuardAdvisor().ifPresent(advisor -> builder.defaultAdvisors(advisor));
         log.info("[LlmProviderRegistry] Created plain ChatClient (no tools) for {}", providerId);
@@ -189,7 +191,7 @@ public class LlmProviderRegistry {
     }
 
     private ChatClient createVoiceChatClient(String providerId) {
-        OpenAiChatModel chatModel = buildChatModel(providerId);
+        OpenAiChatModel chatModel = getChatModel(providerId);
 
         ChatClient.Builder builder = ChatClient.builder(chatModel);
         if (interviewSkillsToolCallback != null) {
@@ -205,6 +207,13 @@ public class LlmProviderRegistry {
         }
         log.info("[LlmProviderRegistry] Created voice ChatClient (SkillsTool + streaming ToolCall) for {}", providerId);
         return builder.build();
+    }
+
+    private OpenAiChatModel getChatModel(String providerId) {
+        return chatModelCache.computeIfAbsent(providerId, id -> {
+            log.info("[LlmProviderRegistry] Creating new ChatModel for provider: {}", id);
+            return buildChatModel(id);
+        });
     }
 
     private OpenAiChatModel buildChatModel(String providerId) {

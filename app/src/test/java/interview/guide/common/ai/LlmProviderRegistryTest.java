@@ -89,6 +89,32 @@ class LlmProviderRegistryTest {
     }
 
     @Test
+    @DisplayName("不同 ChatClient 配方共享同一个 provider 级 ChatModel")
+    void chatClientVariantsShareProviderChatModel() {
+        String providerId = "test-provider";
+        ProviderConfig config = new ProviderConfig();
+        config.setBaseUrl("http://localhost:1234/v1");
+        config.setApiKey("test-key");
+        config.setModel("test-model");
+
+        Map<String, ProviderConfig> providers = new HashMap<>();
+        providers.put(providerId, config);
+
+        when(properties.getProviders()).thenReturn(providers);
+
+        ChatClient defaultClient = registry.getChatClient(providerId);
+        ChatClient plainClient = registry.getPlainChatClient(providerId);
+        ChatClient voiceClient = registry.getVoiceChatClient(providerId);
+
+        assertNotNull(defaultClient);
+        assertNotNull(plainClient);
+        assertNotNull(voiceClient);
+        assertNotSame(defaultClient, plainClient, "Default and plain clients should keep advisor recipes isolated");
+        assertNotSame(defaultClient, voiceClient, "Default and voice clients should keep advisor recipes isolated");
+        verify(properties, times(1)).getProviders();
+    }
+
+    @Test
     @DisplayName("Throw exception for unknown provider")
     void testGetChatClient_UnknownProvider() {
         // Given

@@ -51,7 +51,6 @@ spring:
     show-sql: false
     properties:
       hibernate:
-        dialect: org.hibernate.dialect.PostgreSQLDialect
         format_sql: true
 
   servlet:
@@ -168,6 +167,7 @@ app:
         topk-long: ${APP_AI_RAG_TOPK_LONG:8}
         min-score-short: ${APP_AI_RAG_MIN_SCORE_SHORT:0.18}
         min-score-default: ${APP_AI_RAG_MIN_SCORE_DEFAULT:0.28}
+
   interview:
     follow-up-count: ${APP_INTERVIEW_FOLLOW_UP_COUNT:1}
     evaluation:
@@ -190,7 +190,7 @@ app:
   
   # CORS配置 - React前端
   cors:
-    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:5174,http://localhost:80}
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:5174,http://localhost:80,http://127.0.0.1:5173,http://127.0.0.1:5174,http://127.0.0.1:80}
 
   # Voice interview configuration
   voice-interview:
@@ -283,3 +283,13 @@ app:
       bit-rate: ${APP_VOICE_INTERVIEW_AUDIO_BIT_RATE:24000}
       channels: ${APP_VOICE_INTERVIEW_AUDIO_CHANNELS:1}
       chunk-duration: ${APP_VOICE_INTERVIEW_AUDIO_CHUNK_DURATION:2000}  # 2 seconds
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true

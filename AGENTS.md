@@ -1,6 +1,6 @@
 # AI Interview Platform 编码规范
 
-Spring Boot 4.0 + Java 21 + Spring AI + React 面试平台。写代码时必须遵守以下规则。
+Spring Boot 4.1 + Java 21 + Spring AI + React 面试平台。写代码时必须遵守以下规则。
 
 ---
 
@@ -39,7 +39,7 @@ interview.guide/
     └── voiceinterview/               #   语音面试：WebSocket 实时通话、ASR/TTS、多轮评估
 ```
 
-**技术栈**：Spring Boot 4.0 / Java 21（虚拟线程）/ Spring AI 2.0 / JPA + PostgreSQL + pgvector / Redisson / Redis Stream / MapStruct / iText 8 / Apache Tika
+**技术栈**：Spring Boot 4.1 / Java 21（虚拟线程）/ Spring AI 2.0 / JPA + PostgreSQL + pgvector / Redisson / Redis Stream / MapStruct / iText 8 / Apache Tika
 
 **前端**：React 18 + TypeScript + Vite + TailwindCSS 4（`frontend/` 目录）
 

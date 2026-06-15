@@ -20,4 +20,5 @@ public class StorageConfigProperties {
     private String region = "us-east-1";
     private Duration apiCallTimeout = Duration.ofSeconds(60);
     private Duration apiCallAttemptTimeout = Duration.ofSeconds(20);
+    private boolean autoCreateBucket = true;
 }

@@ -191,6 +191,7 @@ app:
     region: ${APP_STORAGE_REGION:us-east-1}
     api-call-timeout: ${APP_STORAGE_API_CALL_TIMEOUT:60s}
     api-call-attempt-timeout: ${APP_STORAGE_API_CALL_ATTEMPT_TIMEOUT:20s}
+    auto-create-bucket: ${APP_STORAGE_AUTO_CREATE_BUCKET:true}
   
   # CORS配置 - React前端
   cors:

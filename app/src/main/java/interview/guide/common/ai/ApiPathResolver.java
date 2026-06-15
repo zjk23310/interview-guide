@@ -1,9 +1,13 @@
 package interview.guide.common.ai;
 
-import org.springframework.ai.openai.api.OpenAiApi;
-import org.springframework.http.client.SimpleClientHttpRequestFactory;
-import org.springframework.web.client.RestClient;
+import com.openai.client.OpenAIClient;
+import com.openai.client.OpenAIClientImpl;
+import com.openai.core.ClientOptions;
+import com.openai.core.Timeout;
+import com.openai.credential.BearerTokenCredential;
+import org.springframework.ai.openai.http.okhttp.SpringAiOpenAiHttpClient;
 
+import java.time.Duration;
 import java.util.regex.Pattern;
 
 public final class ApiPathResolver {
@@ -15,27 +19,32 @@ public final class ApiPathResolver {
 
   private ApiPathResolver() {}
 
-  public static OpenAiApi buildOpenAiApi(String baseUrl, String apiKey) {
-    return buildOpenAiApi(baseUrl, apiKey, DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT);
+  public static OpenAIClient buildOpenAiClient(String baseUrl, String apiKey) {
+    return buildOpenAiClient(baseUrl, apiKey, DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT);
   }
 
-  public static OpenAiApi buildOpenAiApi(String baseUrl, String apiKey,
+  public static OpenAIClient buildOpenAiClient(String baseUrl, String apiKey,
       int connectTimeout, int readTimeout) {
-    SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
-    requestFactory.setConnectTimeout(connectTimeout);
-    requestFactory.setReadTimeout(readTimeout);
-
-    RestClient.Builder restClientBuilder = RestClient.builder()
-        .requestFactory(requestFactory);
-
-    OpenAiApi.Builder apiBuilder = OpenAiApi.builder()
-        .baseUrl(baseUrl)
+    Timeout timeout = Timeout.builder()
+        .connect(Duration.ofMillis(connectTimeout))
+        .read(Duration.ofMillis(readTimeout))
+        .build();
+    ClientOptions options = ClientOptions.Companion.builder()
         .apiKey(apiKey)
-        .restClientBuilder(restClientBuilder);
-    if (baseUrlContainsVersion(baseUrl)) {
-      apiBuilder.completionsPath("/chat/completions").embeddingsPath("/embeddings");
+        .credential(BearerTokenCredential.create(apiKey))
+        .baseUrl(resolveVersionedBaseUrl(baseUrl))
+        .timeout(timeout)
+        .httpClient(SpringAiOpenAiHttpClient.builder().timeout(timeout).build())
+        .build();
+    return new OpenAIClientImpl(options);
+  }
+
+  public static String resolveVersionedBaseUrl(String baseUrl) {
+    String stripped = stripTrailingSlashes(baseUrl);
+    if (baseUrlContainsVersion(stripped)) {
+      return stripped;
     }
-    return apiBuilder.build();
+    return stripped + "/v1";
   }
 
   public static boolean baseUrlContainsVersion(String baseUrl) {

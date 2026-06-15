@@ -22,7 +22,6 @@ public abstract class AbstractStreamConsumer<T> {
     private final AtomicBoolean running = new AtomicBoolean(false);
     private ExecutorService executorService;
     private String consumerName;
-    private StreamMessageId pendingClaimCursor = StreamMessageId.MIN;
 
     protected AbstractStreamConsumer(RedisService redisService) {
         this.redisService = redisService;
@@ -73,22 +72,14 @@ public abstract class AbstractStreamConsumer<T> {
     private void consumeLoop() {
         while (running.get()) {
             try {
-                pendingClaimCursor = redisService.streamAutoClaimMessagesWithCursor(
-                    streamKey(),
-                    groupName(),
-                    consumerName,
-                    pendingClaimCursor,
-                    AsyncTaskStreamConstants.PENDING_IDLE_TIMEOUT_MS,
-                    AsyncTaskStreamConstants.PENDING_CLAIM_BATCH_SIZE,
-                    this::processMessage
-                );
-
                 redisService.streamConsumeMessages(
                     streamKey(),
                     groupName(),
                     consumerName,
                     AsyncTaskStreamConstants.BATCH_SIZE,
                     AsyncTaskStreamConstants.POLL_INTERVAL_MS,
+                    AsyncTaskStreamConstants.PENDING_IDLE_TIMEOUT_MS,
+                    AsyncTaskStreamConstants.PENDING_CLAIM_BATCH_SIZE,
                     this::processMessage
                 );
             } catch (Exception e) {
@@ -102,7 +93,17 @@ public abstract class AbstractStreamConsumer<T> {
     }
 
     private void processMessage(StreamMessageId messageId, Map<String, String> data) {
-        T payload = parsePayload(messageId, data);
+        T payload;
+        try {
+            payload = parsePayload(messageId, data);
+        } catch (Exception e) {
+            Object fields = data == null ? null : data.keySet();
+            log.warn("Failed to parse {} stream message, ack and discard: messageId={}, fields={}",
+                taskDisplayName(), messageId, fields, e);
+            ackMessage(messageId);
+            return;
+        }
+
         if (payload == null) {
             ackMessage(messageId);
             return;
@@ -137,6 +138,9 @@ public abstract class AbstractStreamConsumer<T> {
     }
 
     protected int parseRetryCount(Map<String, String> data) {
+        if (data == null) {
+            return 0;
+        }
         try {
             return Integer.parseInt(data.getOrDefault(AsyncTaskStreamConstants.FIELD_RETRY_COUNT, "0"));
         } catch (NumberFormatException e) {

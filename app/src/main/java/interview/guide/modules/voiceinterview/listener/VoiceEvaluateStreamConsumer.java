@@ -24,17 +24,19 @@ public class VoiceEvaluateStreamConsumer extends AbstractStreamConsumer<VoiceEva
     private final VoiceInterviewEvaluationService evaluationService;
     private final VoiceInterviewSessionRepository sessionRepository;
 
-    public VoiceEvaluateStreamConsumer(RedisService redisService,
-                                       VoiceInterviewService voiceInterviewService,
-                                       VoiceInterviewEvaluationService evaluationService,
-                                       VoiceInterviewSessionRepository sessionRepository) {
+    public VoiceEvaluateStreamConsumer(
+        RedisService redisService,
+        VoiceInterviewService voiceInterviewService,
+        VoiceInterviewEvaluationService evaluationService,
+        VoiceInterviewSessionRepository sessionRepository
+    ) {
         super(redisService);
         this.voiceInterviewService = voiceInterviewService;
         this.evaluationService = evaluationService;
         this.sessionRepository = sessionRepository;
     }
 
-    record VoiceEvaluatePayload(String sessionId) {}
+    record VoiceEvaluatePayload(Long sessionId) {}
 
     @Override
     protected String taskDisplayName() {
@@ -68,7 +70,7 @@ public class VoiceEvaluateStreamConsumer extends AbstractStreamConsumer<VoiceEva
             log.warn("消息格式错误，跳过: messageId={}", messageId);
             return null;
         }
-        return new VoiceEvaluatePayload(sessionId);
+        return new VoiceEvaluatePayload(Long.parseLong(sessionId));
     }
 
     @Override
@@ -78,7 +80,7 @@ public class VoiceEvaluateStreamConsumer extends AbstractStreamConsumer<VoiceEva
 
     @Override
     protected boolean shouldSkip(VoiceEvaluatePayload payload) {
-        return sessionRepository.findById(Long.parseLong(payload.sessionId()))
+        return sessionRepository.findById(payload.sessionId())
             .map(session -> session.getEvaluateStatus() == AsyncTaskStatus.COMPLETED)
             .orElse(true);
     }
@@ -86,33 +88,38 @@ public class VoiceEvaluateStreamConsumer extends AbstractStreamConsumer<VoiceEva
     @Override
     protected void markProcessing(VoiceEvaluatePayload payload) {
         voiceInterviewService.updateEvaluateStatus(
-                Long.parseLong(payload.sessionId()), AsyncTaskStatus.PROCESSING, null);
+                payload.sessionId(), AsyncTaskStatus.PROCESSING, null);
     }
 
     @Override
     protected void processBusiness(VoiceEvaluatePayload payload) {
-        evaluationService.generateEvaluation(Long.parseLong(payload.sessionId()));
-        log.info("语音面试评估完成: sessionId={}", payload.sessionId());
+        Long sessionId = payload.sessionId();
+        if (!sessionRepository.existsById(sessionId)) {
+            log.warn("语音面试会话已被删除，跳过评估任务: sessionId={}", sessionId);
+            return;
+        }
+        evaluationService.generateEvaluation(sessionId);
+        log.info("语音面试评估完成: sessionId={}", sessionId);
     }
 
     @Override
     protected void markCompleted(VoiceEvaluatePayload payload) {
         voiceInterviewService.updateEvaluateStatus(
-                Long.parseLong(payload.sessionId()), AsyncTaskStatus.COMPLETED, null);
+                payload.sessionId(), AsyncTaskStatus.COMPLETED, null);
     }
 
     @Override
     protected void markFailed(VoiceEvaluatePayload payload, String error) {
         voiceInterviewService.updateEvaluateStatus(
-                Long.parseLong(payload.sessionId()), AsyncTaskStatus.FAILED, error);
+                payload.sessionId(), AsyncTaskStatus.FAILED, error);
     }
 
     @Override
     protected void retryMessage(VoiceEvaluatePayload payload, int retryCount) {
-        String sessionId = payload.sessionId();
+        Long sessionId = payload.sessionId();
         try {
             Map<String, String> message = Map.of(
-                AsyncTaskStreamConstants.FIELD_VOICE_SESSION_ID, sessionId,
+                AsyncTaskStreamConstants.FIELD_VOICE_SESSION_ID, sessionId.toString(),
                 AsyncTaskStreamConstants.FIELD_RETRY_COUNT, String.valueOf(retryCount)
             );
 
@@ -125,7 +132,7 @@ public class VoiceEvaluateStreamConsumer extends AbstractStreamConsumer<VoiceEva
         } catch (Exception e) {
             log.error("重试入队失败: sessionId={}, error={}", sessionId, e.getMessage(), e);
             voiceInterviewService.updateEvaluateStatus(
-                    Long.parseLong(sessionId), AsyncTaskStatus.FAILED, truncateError("重试入队失败: " + e.getMessage()));
+                    sessionId, AsyncTaskStatus.FAILED, truncateError("重试入队失败: " + e.getMessage()));
         }
     }
 }

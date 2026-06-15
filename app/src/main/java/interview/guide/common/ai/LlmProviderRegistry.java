@@ -198,7 +198,7 @@ public class LlmProviderRegistry {
         }
         List<Advisor> advisors = new ArrayList<>();
         if (toolCallingManager != null) {
-            advisors.add(buildToolCallAdvisor(true, true));
+            advisors.add(buildToolCallAdvisor(true));
         }
         buildSafeGuardAdvisor().ifPresent(advisors::add);
         if (!advisors.isEmpty()) {
@@ -277,9 +277,7 @@ public class LlmProviderRegistry {
 
         if (config.isToolCallEnabled()) {
             if (toolCallingManager != null) {
-                advisors.add(buildToolCallAdvisor(
-                    config.isToolCallConversationHistoryEnabled(),
-                    config.isStreamToolCallResponses()));
+                advisors.add(buildToolCallAdvisor(config.isToolCallConversationHistoryEnabled()));
             } else {
                 log.warn("[LlmProviderRegistry] ToolCallAdvisor skipped: ToolCallingManager unavailable, provider={}", providerId);
             }
@@ -304,12 +302,10 @@ public class LlmProviderRegistry {
         return advisors;
     }
 
-    private ToolCallingAdvisor buildToolCallAdvisor(boolean conversationHistoryEnabled,
-                                                   boolean streamToolCallResponses) {
+    private ToolCallingAdvisor buildToolCallAdvisor(boolean conversationHistoryEnabled) {
         return ToolCallingAdvisor.builder()
             .toolCallingManager(toolCallingManager)
             .conversationHistoryEnabled(conversationHistoryEnabled)
-            .streamToolCallResponses(streamToolCallResponses)
             .build();
     }
 

@@ -2,8 +2,8 @@
 
 [versions]
 spring-boot = "4.1.0"
-springAi = "2.0.0-RC2"
-springAiAgentUtils = "0.7.0"
+springAi = "2.0.0"
+springAiAgentUtils = "0.10.0"
 tika = "2.9.2"
 lombok = "1.18.36"
 junit-jupiter = "5.12.0"

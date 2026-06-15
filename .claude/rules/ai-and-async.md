@@ -16,7 +16,7 @@ paths:
 - Provider 配置来自 `app.ai.providers.{providerId}` 和默认 `app.ai.default-provider`。
 - ChatClient 获取统一使用 `LlmProviderRegistry.getChatClientOrDefault(provider)`。
 - Provider 连通性测试要限制超时，并防止访问内网或特殊地址。
-- Spring AI 2.0.0-RC2 代码优先使用非 deprecated API。
+- Spring AI 2.0.0 代码优先使用非 deprecated API。
 
 ## Structured Output
 

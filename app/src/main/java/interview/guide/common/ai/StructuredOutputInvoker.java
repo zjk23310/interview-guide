@@ -41,6 +41,7 @@ public class StructuredOutputInvoker {
     private final boolean retryAppendStrictJsonInstruction;
     private final int errorMessageMaxLength;
     private final boolean metricsEnabled;
+    private final boolean schemaValidationEnabled;
     private final MeterRegistry meterRegistry;
 
     public StructuredOutputInvoker(
@@ -53,6 +54,7 @@ public class StructuredOutputInvoker {
         this.retryAppendStrictJsonInstruction = properties.isStructuredRetryAppendStrictJsonInstruction();
         this.errorMessageMaxLength = Math.max(20, properties.getStructuredErrorMessageMaxLength());
         this.metricsEnabled = properties.isStructuredMetricsEnabled();
+        this.schemaValidationEnabled = properties.isStructuredSchemaValidationEnabled();
         this.meterRegistry = meterRegistry;
     }
 
@@ -76,12 +78,8 @@ public class StructuredOutputInvoker {
                 ? securedSystemPrompt
                 : buildRetrySystemPrompt(securedSystemPrompt, lastError);
             try {
-                String content = chatClient.prompt()
-                    .system(attemptSystemPrompt)
-                    .user(userPrompt)
-                    .call()
-                    .content();
-                T result = convertWithRepair(content, outputConverter, logContext, log);
+                T result = callStructuredOutput(
+                    chatClient, attemptSystemPrompt, userPrompt, outputConverter, logContext, log);
                 recordAttempt(contextTag, STATUS_SUCCESS);
                 recordInvocation(contextTag, STATUS_SUCCESS, startNanos);
                 return result;
@@ -103,6 +101,25 @@ public class StructuredOutputInvoker {
             errorCode,
             errorPrefix + (lastError != null ? lastError.getMessage() : "unknown")
         );
+    }
+
+    private <T> T callStructuredOutput(
+        ChatClient chatClient,
+        String systemPrompt,
+        String userPrompt,
+        BeanOutputConverter<T> outputConverter,
+        String logContext,
+        Logger log
+    ) {
+        var call = chatClient.prompt()
+            .system(systemPrompt)
+            .user(userPrompt)
+            .call();
+        if (schemaValidationEnabled) {
+            return call.entity(outputConverter, spec -> spec.validateSchema());
+        }
+        String content = call.content();
+        return convertWithRepair(content, outputConverter, logContext, log);
     }
 
     private <T> T convertWithRepair(

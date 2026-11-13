@@ -27,15 +27,16 @@ public class StructuredOutputInvoker {
 3) 所有字符串内引号必须正确转义。
     """;
 
-    private static final String METRIC_INVOCATIONS = "app.ai.structured_output.invocations";
-    private static final String METRIC_ATTEMPTS = "app.ai.structured_output.attempts";
-    private static final String METRIC_LATENCY = "app.ai.structured_output.latency";
+    private static final String METRIC_INVOCATIONS = "app.ai.structured_output.invocations";//整体调用次数
+    private static final String METRIC_ATTEMPTS = "app.ai.structured_output.attempts";//单词调用次数
+    private static final String METRIC_LATENCY = "app.ai.structured_output.latency";//单词耗时
     private static final String STATUS_SUCCESS = "success";
     private static final String STATUS_FAILURE = "failure";
     private static final int MAX_CONTEXT_TAG_LENGTH = 48;
     private static final Pattern NON_ALNUM_PATTERN = Pattern.compile("[^a-z0-9_]+");
     private static final Pattern MULTI_UNDERSCORE = Pattern.compile("_+");
 
+    //构造器会从StructuredOutputProperties读取这些配置
     private final int maxAttempts;
     private final boolean includeLastErrorInRetryPrompt;
     private final boolean retryUseRepairPrompt;
@@ -55,19 +56,19 @@ public class StructuredOutputInvoker {
         this.retryAppendStrictJsonInstruction = properties.isStructuredRetryAppendStrictJsonInstruction();
         this.errorMessageMaxLength = Math.max(20, properties.getStructuredErrorMessageMaxLength());
         this.metricsEnabled = properties.isStructuredMetricsEnabled();
-        this.schemaValidationEnabled = properties.isStructuredSchemaValidationEnabled();
+        this.schemaValidationEnabled = properties.isStructuredSchemaValidationEnabled();//是否启用了结构化模式验证
         this.meterRegistry = meterRegistry;
     }
 
     public <T> T invoke(
         ChatClient chatClient,
-        String systemPromptWithFormat,
-        String userPrompt,
-        BeanOutputConverter<T> outputConverter,
-        ErrorCode errorCode,
-        String errorPrefix,
-        String logContext,
-        Logger log
+        String systemPromptWithFormat,//系统Prompt加JSON格式要求
+        String userPrompt,//包含简历文本的Prompt
+        BeanOutputConverter<T> outputConverter,//JSON转为Java
+        ErrorCode errorCode,//业务错误代码
+        String errorPrefix,//错误消息前缀
+        String logContext,//日志和指标中的业务名称
+        Logger log//业务类日志对象
     ) {
         long startNanos = System.nanoTime();
         String contextTag = normalizeContextTag(logContext);
@@ -106,7 +107,7 @@ public class StructuredOutputInvoker {
         );
     }
 
-    private <T> T callStructuredOutput(
+    private <T> T callStructuredOutput(//调用
         ChatClient chatClient,
         String systemPrompt,
         String userPrompt,
@@ -118,24 +119,24 @@ public class StructuredOutputInvoker {
             .system(systemPrompt)
             .user(userPrompt)
             .call();
-        if (schemaValidationEnabled) {
+        if (schemaValidationEnabled) {//开启Schema验证
             return call.entity(outputConverter, spec -> spec.validateSchema());
         }
         String content = call.content();
         return convertWithRepair(content, outputConverter, logContext, log);
     }
 
-    private <T> T convertWithRepair(
+    private <T> T convertWithRepair(//带有修复机制的转换
         String content,
         BeanOutputConverter<T> outputConverter,
         String logContext,
         Logger log
     ) {
         try {
-            return outputConverter.convert(content);
-        } catch (Exception firstError) {
+            return outputConverter.convert(content);//尝试直接解析
+        } catch (Exception firstError) {//抛异常
             String repaired = repairUnescapedQuotesInJsonStrings(content);
-            if (!repaired.equals(content)) {
+            if (!repaired.equals(content)) {//不相等
                 try {
                     T result = outputConverter.convert(repaired);
                     log.warn("{}结构化 JSON 存在未转义引号，已在本地修复后解析成功", logContext);
@@ -148,7 +149,7 @@ public class StructuredOutputInvoker {
         }
     }
 
-    private String repairUnescapedQuotesInJsonStrings(String content) {
+    private String repairUnescapedQuotesInJsonStrings(String content) {//修复 JSON 字符串中未转义的引号
         if (content == null || content.isBlank()) {
             return content;
         }
@@ -200,7 +201,7 @@ public class StructuredOutputInvoker {
         return true;
     }
 
-    private String buildRetrySystemPrompt(String systemPromptWithFormat, Exception lastError) {
+    private String buildRetrySystemPrompt(String systemPromptWithFormat, Exception lastError) {//构筑重试的系统提示词
         if (!retryUseRepairPrompt) {
             return systemPromptWithFormat;
         }

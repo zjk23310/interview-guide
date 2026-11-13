@@ -22,7 +22,8 @@ public class AnalyzeStreamProducer extends AbstractStreamProducer<AnalyzeStreamP
     private final ResumeRepository resumeRepository;
     private final TransactionalExecutor transactionalExecutor;
 
-    record AnalyzeTaskPayload(Long resumeId) {}
+    record AnalyzeTaskPayload(Long resumeId) {}//跟我见到的一个类型，都是使用record
+    //这个也可以直接用long，但是技术偏好说是
 
     public AnalyzeStreamProducer(
         RedisService redisService,
@@ -54,7 +55,7 @@ public class AnalyzeStreamProducer extends AbstractStreamProducer<AnalyzeStreamP
     }
 
     @Override
-    protected Map<String, String> buildMessage(AnalyzeTaskPayload payload) {
+    protected Map<String, String> buildMessage(AnalyzeTaskPayload payload) {//注意注意
         return Map.of(
             AsyncTaskStreamConstants.FIELD_RESUME_ID, payload.resumeId().toString(),
             AsyncTaskStreamConstants.FIELD_RETRY_COUNT, "0"

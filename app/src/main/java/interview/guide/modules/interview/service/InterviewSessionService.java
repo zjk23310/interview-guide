@@ -71,13 +71,14 @@ public class InterviewSessionService {
             185,
             600,
             TimeUnit.SECONDS,
-            () -> createIdempotentSession(request, requestId)
+            () -> createIdempotentSession(request, requestId)//这个这个
         );
     }
 
+    //创建按幂等会话
     private InterviewSessionDTO createIdempotentSession(CreateInterviewRequest request, String requestId) {
         String resultKey = CREATE_RESULT_PREFIX + requestId;
-        String cachedSessionId = redisService.get(resultKey);
+        String cachedSessionId = redisService.get(resultKey);//redis获取
         if (cachedSessionId != null) {
             log.info("复用缓存中的幂等创建请求: requestId={}, sessionId={}", requestId, cachedSessionId);
             return getSession(cachedSessionId);
@@ -97,10 +98,12 @@ public class InterviewSessionService {
         return created;
     }
 
+    //无requestid方法
     private InterviewSessionDTO createSessionInternal(CreateInterviewRequest request) {
         return createSessionInternal(request, null);
     }
 
+    //重载
     private InterviewSessionDTO createSessionInternal(CreateInterviewRequest request, String requestId) {
         // 如果指定了resumeId且未强制创建，检查是否有未完成的会话
         if (request.resumeId() != null && !Boolean.TRUE.equals(request.forceCreate())) {
@@ -218,6 +221,11 @@ public class InterviewSessionService {
         );
     }
 
+    /**
+     * 规范化requestid
+     * @param requestId
+     * Explainer ZJK
+     */
     private String normalizeRequestId(String requestId) {
         if (requestId == null || requestId.isBlank()) {
             return null;

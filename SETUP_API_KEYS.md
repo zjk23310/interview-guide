@@ -39,7 +39,7 @@ AI_BAILIAN_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxx
 
 1. 复制示例配置文件：
 ```bash
-cp .env.example .env
+cp .env .env
 ```
 
 2. 编辑 `.env` 文件，填入您的实际密钥：

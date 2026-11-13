@@ -13,7 +13,7 @@ import java.util.function.Function;
 
 /**
  * 简历相关的对象映射器
- * 使用MapStruct自动生成转换代码
+ * 使用MapStruct自动生成转换代码，Entity和DTO之间转换的工具
  * <p>
  * 注意：JSON字段(strengthsJson, suggestionsJson)需要在Service层手动处理
  */

@@ -39,7 +39,7 @@ spring:
 
   # PostgreSQL数据库配置
   datasource:
-    url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB:interview_guide}
+    url: jdbc:postgresql://${POSTGRES_HOST:192.168.100.135}:${POSTGRES_PORT:5432}/${POSTGRES_DB:interview_guide}
     username: ${POSTGRES_USER:postgres}
     # 与 docker-compose.dev.yml 中 postgres 服务默认一致（本地只起依赖容器 + bootRun 时无需改）
     password: ${POSTGRES_PASSWORD:123456}
@@ -71,7 +71,7 @@ spring:
     redisson:
       config: |
         singleServerConfig:
-          address: "redis://${REDIS_HOST:localhost}:${REDIS_PORT:6379}"
+          address: "redis://${REDIS_HOST:192.168.100.135}:${REDIS_PORT:6379}"
           database: ${REDIS_DATABASE:0}
           connectionMinimumIdleSize: 10
           connectionPoolSize: 64
@@ -96,8 +96,8 @@ spring:
 # Application custom configuration
 app:
   ai:
-    default-provider: dashscope
-    default-embedding-provider: dashscope
+    default-provider: deepseek
+    default-embedding-provider: deepseek
     embedding-dimensions: ${APP_AI_EMBEDDING_DIMENSIONS:1024}
     security:
       api-key-encryption-key: ${APP_AI_CONFIG_ENCRYPTION_KEY:}
@@ -212,9 +212,9 @@ app:
 
   # RustFS (S3兼容) 存储配置
   storage:
-    endpoint: ${APP_STORAGE_ENDPOINT:http://localhost:9000}
-    access-key: ${APP_STORAGE_ACCESS_KEY:}
-    secret-key: ${APP_STORAGE_SECRET_KEY:}
+    endpoint: ${APP_STORAGE_ENDPOINT:http://192.168.100.135:9000}
+    access-key: ${APP_STORAGE_ACCESS_KEY:V8c7yelNdfi4BVeKMJ5X}
+    secret-key: ${APP_STORAGE_SECRET_KEY:12345678}
     bucket: ${APP_STORAGE_BUCKET:interview-guide}
     region: ${APP_STORAGE_REGION:us-east-1}
     api-call-timeout: ${APP_STORAGE_API_CALL_TIMEOUT:60s}

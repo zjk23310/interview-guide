@@ -41,9 +41,9 @@ import java.util.List;
 @RequiredArgsConstructor
 public class PdfExportService {
     
-    private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-    private static final DeviceRgb HEADER_COLOR = new DeviceRgb(41, 128, 185);
-    private static final DeviceRgb SECTION_COLOR = new DeviceRgb(52, 73, 94);
+    private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");//日期格式
+    private static final DeviceRgb HEADER_COLOR = new DeviceRgb(41, 128, 185);//主标题
+    private static final DeviceRgb SECTION_COLOR = new DeviceRgb(52, 73, 94);//小标题
     private static final String QUESTIONS_DESTINATION = "interview-questions";
     
     private final ObjectMapper objectMapper;
@@ -95,10 +95,11 @@ public class PdfExportService {
      * 导出简历分析报告为PDF
      */
     public byte[] exportResumeAnalysis(ResumeEntity resume, ResumeAnalysisResponse analysis) {
-        ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        PdfWriter writer = new PdfWriter(baos);
-        PdfDocument pdfDoc = new PdfDocument(writer);
-        Document document = new Document(pdfDoc);
+        //iText的分层API
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();//PDF字节暂存内存
+        PdfWriter writer = new PdfWriter(baos);//生成内容写到输出流
+        PdfDocument pdfDoc = new PdfDocument(writer);//负责PDF结构
+        Document document = new Document(pdfDoc);//负责排版，段落，表格
         
         // 使用支持中文的字体
         configureFonts(document);
@@ -178,7 +179,7 @@ public class PdfExportService {
     /**
      * 导出面试报告为PDF
      */
-    public byte[] exportInterviewReport(InterviewSessionEntity session) {
+    public byte[] exportInterviewReport(InterviewSessionEntity session) {//输入是包含报告数据和答案列表的会话实体，输出也是 PDF 字节
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         PdfWriter writer = new PdfWriter(baos);
         PdfDocument pdfDoc = new PdfDocument(writer);
@@ -264,12 +265,12 @@ public class PdfExportService {
         // 问答详情
         List<InterviewAnswerEntity> answers = session.getAnswers();
         if (answers != null && !answers.isEmpty()) {
-            PdfOutline questions = pdfDoc.getOutlines(false).addOutline("问答详情");
-            questions.addDestination(new PdfStringDestination(QUESTIONS_DESTINATION));
+            PdfOutline questions = pdfDoc.getOutlines(false).addOutline("问答详情");//添加标签
+            questions.addDestination(new PdfStringDestination(QUESTIONS_DESTINATION));//设置跳转目标
             questions.setOpen(true);
             pdfDoc.getCatalog().setPageMode(PdfName.UseOutlines);
             document.add(new Paragraph("\n"));
-            document.add(createSectionTitle("问答详情").setDestination(QUESTIONS_DESTINATION));
+            document.add(createSectionTitle("问答详情").setDestination(QUESTIONS_DESTINATION));//标题设置了对应的目标名称
             int bookmarkIndex = 0;
             
             for (InterviewAnswerEntity answer : answers.stream()

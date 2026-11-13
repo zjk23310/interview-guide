@@ -17,8 +17,8 @@ import org.springframework.web.multipart.MultipartFile;
 @RequiredArgsConstructor
 public class ResumeParseService {
 
-    private final DocumentParseService documentParseService;
-    private final ContentTypeDetectionService contentTypeDetectionService;
+    private final DocumentParseService documentParseService;//文档解析
+    private final ContentTypeDetectionService contentTypeDetectionService;//内容检测服务
     private final FileStorageService storageService;
 
     /**

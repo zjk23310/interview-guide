@@ -116,7 +116,7 @@ public class EvaluateStreamConsumer extends AbstractStreamConsumer<EvaluateStrea
             return;
         }
 
-        InterviewSessionEntity session = sessionOpt.get();
+        InterviewSessionEntity session = sessionOpt.get();//简历会话实体
         List<InterviewQuestionDTO> questions = objectMapper.readValue(
             session.getQuestionsJson(),
             new TypeReference<>() {}
@@ -146,6 +146,7 @@ public class EvaluateStreamConsumer extends AbstractStreamConsumer<EvaluateStrea
     }
 
     @Override
+
     protected void markFailed(EvaluatePayload payload, String error) {
         updateEvaluateStatus(payload.sessionId(), AsyncTaskStatus.FAILED, error);
     }

@@ -295,7 +295,7 @@ cd interview-guide
 推荐复制 `.env.example` 为 `.env`，后端 `bootRun` 会自动读取根目录 `.env`。最少需要填写 `AI_BAILIAN_API_KEY`，用于 DashScope 文本模型、ASR 和 TTS：
 
 ```bash
-cp .env.example .env
+cp .env .env
 
 # 编辑 .env
 # AI_BAILIAN_API_KEY=your_dashscope_api_key
@@ -401,7 +401,7 @@ Docker Compose 编排了 6 个服务：PostgreSQL（pgvector）、Redis、MinIO�
 
 ```bash
 # 1. 复制环境变量配置文件
-cp .env.example .env
+cp .env .env
 
 # 2. 编辑 .env 文件，填入 AI 配置
 # vim .env

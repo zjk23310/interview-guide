@@ -32,6 +32,8 @@ public class ContentTypeDetectionService {
     public String detectContentType(MultipartFile file) {
         try (InputStream inputStream = file.getInputStream()) {
             return tika.detect(inputStream, file.getOriginalFilename());
+            //检测给定文档的媒体类型。类型检测基于给定文档流的内容和文档名称。
+            // 如果文档流支持标记功能，则在此方法返回之前，流将被标记并重置到原始位置。只会从流中读取有限数量的字节。此方法不会关闭给定的文档流。
         } catch (IOException e) {
             log.warn("无法检测文件类型，使用 Content-Type 头部: {}", e.getMessage());
             return file.getContentType();

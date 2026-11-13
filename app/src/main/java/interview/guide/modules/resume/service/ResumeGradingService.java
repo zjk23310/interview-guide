@@ -39,11 +39,11 @@ public class ResumeGradingService {
     
     // 中间DTO用于接收AI响应
     private record ResumeAnalysisResponseDTO(
-        int overallScore,
-        ScoreDetailDTO scoreDetail,
-        String summary,
-        List<String> strengths,
-        List<SuggestionDTO> suggestions
+        int overallScore,//总分
+        ScoreDetailDTO scoreDetail,//得分细节
+        String summary,//总结
+        List<String> strengths,//优点
+        List<SuggestionDTO> suggestions//建议
     ) {}
     
     private record ScoreDetailDTO(
@@ -63,20 +63,20 @@ public class ResumeGradingService {
     
     public ResumeGradingService(
             LlmProviderRegistry llmProviderRegistry,
-            StructuredOutputInvoker structuredOutputInvoker,
+            StructuredOutputInvoker structuredOutputInvoker,//AI相关
             ResumeAnalysisProperties properties,
             ResourceLoader resourceLoader) throws IOException {
         this.llmProviderRegistry = llmProviderRegistry;
         this.structuredOutputInvoker = structuredOutputInvoker;
-        this.systemPromptTemplate = new PromptTemplate(
-            resourceLoader.getResource(properties.getSystemPromptPath())
+        this.systemPromptTemplate = new PromptTemplate(//读取Prompt
+            resourceLoader.getResource(properties.getSystemPromptPath())//需要注意ResourceLoader这个类不需要注入，因为这个类是Spring提供的接口，实现了@Service
                 .getContentAsString(StandardCharsets.UTF_8)
         );
         this.userPromptTemplate = new PromptTemplate(
             resourceLoader.getResource(properties.getUserPromptPath())
                 .getContentAsString(StandardCharsets.UTF_8)
         );
-        this.outputConverter = new BeanOutputConverter<>(ResumeAnalysisResponseDTO.class);
+        this.outputConverter = new BeanOutputConverter<>(ResumeAnalysisResponseDTO.class);//输出转换器
     }
     
     /**
@@ -85,12 +85,12 @@ public class ResumeGradingService {
      * @param resumeText 简历文本内容
      * @return 分析结果
      */
-    public ResumeAnalysisResponse analyzeResume(String resumeText) {
+    public ResumeAnalysisResponse analyzeResume(String resumeText) {//核心方法
         log.info("开始分析简历，文本长度: {} 字符", resumeText.length());
         
         try {
             // 加载系统提示词
-            String systemPrompt = systemPromptTemplate.render();
+            String systemPrompt = systemPromptTemplate.render();//渲染系统prompt，系统Prompt无动态参数，直接调用无参的相当于返回已经加载的完整Prompt文本
             
             // 加载用户提示词并填充变量
             Map<String, Object> variables = new HashMap<>();
@@ -122,7 +122,7 @@ public class ResumeGradingService {
             }
             
             // 转换为业务对象
-            ResumeAnalysisResponse result = convertToResponse(dto, resumeText);
+            ResumeAnalysisResponse result = convertToResponse(dto, resumeText);//转换
             log.info("简历分析完成，总分: {}", result.overallScore());
             
             return result;
@@ -138,7 +138,7 @@ public class ResumeGradingService {
      * 转换DTO为业务对象
      */
     private ResumeAnalysisResponse convertToResponse(ResumeAnalysisResponseDTO dto, String originalText) {
-        ScoreDetail scoreDetail = new ScoreDetail(
+        ScoreDetail scoreDetail = new ScoreDetail(//得分细节
             dto.scoreDetail().contentScore(),
             dto.scoreDetail().structureScore(),
             dto.scoreDetail().skillMatchScore(),
@@ -146,7 +146,7 @@ public class ResumeGradingService {
             dto.scoreDetail().projectScore()
         );
         
-        List<Suggestion> suggestions = dto.suggestions().stream()
+        List<Suggestion> suggestions = dto.suggestions().stream()//建议
             .map(s -> new Suggestion(s.category(), s.priority(), s.issue(), s.recommendation()))
             .toList();
         

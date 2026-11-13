@@ -98,7 +98,7 @@ public class InterviewPersistenceService {
             session.setCurrentQuestionIndex(0);
             session.setStatus(InterviewSessionEntity.SessionStatus.CREATED);
             session.setQuestionsJson(objectMapper.writeValueAsString(questions));
-            session.setLlmProvider(llmProvider != null ? llmProvider : "default");
+            session.setLlmProvider(llmProvider != null ? llmProvider : "default");//如果为空就使用默认的
             session.setSkillId(skillId != null ? skillId : InterviewDefaults.SKILL_ID);
             session.setDifficulty(difficulty != null ? difficulty : InterviewDefaults.DIFFICULTY);
             session.setSourceType(sourceType != null ? sourceType : "NORMAL");
@@ -107,7 +107,7 @@ public class InterviewPersistenceService {
 
             // 简历可选：有 resumeId 则关联简历
             if (resumeId != null) {
-                Optional<ResumeEntity> resumeOpt = resumeRepository.findById(resumeId);
+                Optional<ResumeEntity> resumeOpt = resumeRepository.findById(resumeId);//查询是否有关联的简历
                 resumeOpt.ifPresent(session::setResume);
             }
 
@@ -128,9 +128,9 @@ public class InterviewPersistenceService {
     @Transactional(rollbackFor = Exception.class)
     public void updateSessionStatus(String sessionId, InterviewSessionEntity.SessionStatus status) {
         Optional<InterviewSessionEntity> sessionOpt = sessionRepository.findBySessionId(sessionId);
-        if (sessionOpt.isPresent()) {
+        if (sessionOpt.isPresent()) {//存在
             InterviewSessionEntity session = sessionOpt.get();
-            session.setStatus(status);
+            session.setStatus(status);//设置状态
             if (status == InterviewSessionEntity.SessionStatus.COMPLETED ||
                 status == InterviewSessionEntity.SessionStatus.EVALUATED) {
                 session.setCompletedAt(LocalDateTime.now());

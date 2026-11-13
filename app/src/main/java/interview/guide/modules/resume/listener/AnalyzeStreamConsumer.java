@@ -28,10 +28,10 @@ import java.util.UUID;
 @Component
 public class AnalyzeStreamConsumer extends AbstractStreamConsumer<AnalyzeStreamConsumer.AnalyzePayload> {
 
-    private final ResumeGradingService gradingService;
+    private final ResumeGradingService gradingService;//评分
     private final ResumePersistenceService persistenceService;
     private final ResumeRepository resumeRepository;
-    private final ResumeParseService parseService;
+    private final ResumeParseService parseService;//转换
 
     public AnalyzeStreamConsumer(
         RedisService redisService,
@@ -112,7 +112,7 @@ public class AnalyzeStreamConsumer extends AbstractStreamConsumer<AnalyzeStreamC
 
     @Override
     protected boolean shouldSkip(AnalyzePayload payload) {
-        return resumeRepository.findById(payload.resumeId())
+        return resumeRepository.findById(payload.resumeId())//有简历且状态完成
             .map(resume -> resume.getAnalyzeStatus() == AsyncTaskStatus.COMPLETED)
             .orElse(true);
     }
@@ -130,8 +130,8 @@ public class AnalyzeStreamConsumer extends AbstractStreamConsumer<AnalyzeStreamC
      */
     @Override
     protected boolean tryMarkProcessing(AnalyzePayload payload) {
-        String attemptId = UUID.randomUUID().toString();
-        boolean claimed = resumeRepository.tryMarkAnalyzeProcessing(
+        String attemptId = UUID.randomUUID().toString();//凭证
+        boolean claimed = resumeRepository.tryMarkAnalyzeProcessing(//带条件的数据更新
             payload.resumeId(), attemptId, java.time.LocalDateTime.now()) == 1;
         if (claimed) {
             payload.setAttemptId(attemptId);
@@ -173,7 +173,7 @@ public class AnalyzeStreamConsumer extends AbstractStreamConsumer<AnalyzeStreamC
     }
 
     private void heartbeat(AnalyzePayload payload) {
-        int updated = resumeRepository.heartbeatAnalyzeProcessing(
+        int updated = resumeRepository.heartbeatAnalyzeProcessing(//更新现在的时间，告诉系统还活着
             payload.resumeId(), payload.attemptId(), java.time.LocalDateTime.now());
         if (updated != 1) {
             throw new BusinessException(ErrorCode.INTERNAL_ERROR, "简历分析任务执行权已失效");

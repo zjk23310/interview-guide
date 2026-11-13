@@ -84,7 +84,7 @@ public class FileValidationService {
             return false;
         }
         
-        String lowerContentType = contentType.toLowerCase();
+        String lowerContentType = contentType.toLowerCase();//小写
         return allowedTypes.stream()
             .anyMatch(allowed -> {
                 String lowerAllowed = allowed.toLowerCase();

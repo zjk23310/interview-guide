@@ -64,9 +64,10 @@ public class EvaluateStreamProducer extends AbstractStreamProducer<String> {
         return "sessionId=" + sessionId;
     }
 
+    //失败
     @Override
     protected void onSendFailed(String sessionId, String error) {
-        transactionalExecutor.runRequiresNew(
+        transactionalExecutor.runRequiresNew(//这里很关键，如果事务A抛出异常了，我尝试在抛出异常中不加新事物解决异常（比如在数据库中存入该异常），那么由于事务特性，处理的过程也会被回滚，相当于处理了一个滚木
             () -> updateEvaluateStatus(sessionId, AsyncTaskStatus.FAILED, truncateError(error)));
     }
 

@@ -36,9 +36,9 @@ import java.util.Map;
 @Tag(name = "简历管理", description = "简历上传、分析、导出与删除")
 public class ResumeController {
 
-    private final ResumeUploadService uploadService;
-    private final ResumeDeleteService deleteService;
-    private final ResumeHistoryService historyService;
+    private final ResumeUploadService uploadService;//简历上传
+    private final ResumeDeleteService deleteService;//删除
+    private final ResumeHistoryService historyService;//简历历史
 
     /**
      * 上传简历并获取分析结果
@@ -85,9 +85,9 @@ public class ResumeController {
             var result = historyService.exportAnalysisPdf(id);
             String filename = URLEncoder.encode(result.filename(), StandardCharsets.UTF_8);
 
-            return ResponseEntity.ok()
+            return ResponseEntity.ok()//浏览器下载文件本质就是http响应
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename*=UTF-8''" + filename)
-                .contentType(MediaType.APPLICATION_PDF)
+                .contentType(MediaType.APPLICATION_PDF)//告诉浏览器响应内容是PDF
                 .body(result.pdfBytes());
         } catch (Exception e) {
             log.error("导出PDF失败: resumeId={}", id, e);

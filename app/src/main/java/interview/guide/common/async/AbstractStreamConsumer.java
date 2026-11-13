@@ -22,7 +22,7 @@ public abstract class AbstractStreamConsumer<T> {
     private final RedisService redisService;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private ExecutorService executorService;
-    private String consumerName;
+    private String consumerName;//消费者名称
 
     protected AbstractStreamConsumer(RedisService redisService) {
         this.redisService = redisService;
@@ -31,7 +31,7 @@ public abstract class AbstractStreamConsumer<T> {
     @PostConstruct
     public void init() {
         this.consumerName = consumerPrefix() + UUID.randomUUID().toString().substring(0, 8);
-        this.executorService = new ThreadPoolExecutor(
+        this.executorService = new ThreadPoolExecutor(//创建线程池
             1,
             1,
             0L,
@@ -39,19 +39,19 @@ public abstract class AbstractStreamConsumer<T> {
             new LinkedBlockingQueue<>(),
             r -> {
                 Thread t = new Thread(r, threadName());
-                t.setDaemon(true);
+                t.setDaemon(true);//设置为守护线程
                 return t;
-            },
+            },//这个是lamdba表达式，创建的是ThreadFactory
             new ThreadPoolExecutor.AbortPolicy()
         );
 
         running.set(true);
-        executorService.submit(this::startConsumer);
+        executorService.submit(this::startConsumer);//执行第一个任务，开启消费者
         log.info("{} consumer started: consumerName={}", taskDisplayName(), consumerName);
     }
 
     @PreDestroy
-    public void shutdown() {
+    public void shutdown() {//关闭线程池
         running.set(false);
         if (executorService != null) {
             executorService.shutdown();
@@ -59,7 +59,7 @@ public abstract class AbstractStreamConsumer<T> {
         log.info("{} consumer stopped: consumerName={}", taskDisplayName(), consumerName);
     }
 
-    private void startConsumer() {
+    private void startConsumer() {//开启创建StramGroup
         try {
             redisService.createStreamGroup(streamKey(), groupName());
             log.info("Redis Stream group is ready: {}", groupName());
@@ -71,17 +71,17 @@ public abstract class AbstractStreamConsumer<T> {
     }
 
     private void consumeLoop() {
-        while (running.get()) {
+        while (running.get()) {//正在运行
             try {
-                redisService.streamConsumeMessages(
-                    streamKey(),
-                    groupName(),
-                    consumerName,
+                redisService.streamConsumeMessages(//从Consume获取信息
+                    streamKey(),//Stream 名称
+                    groupName(),//消费者组名称
+                    consumerName,//当前消费者
                     AsyncTaskStreamConstants.BATCH_SIZE,
-                    AsyncTaskStreamConstants.POLL_INTERVAL_MS,
+                    AsyncTaskStreamConstants.POLL_INTERVAL_MS,//没消息阻塞多久
                     AsyncTaskStreamConstants.PENDING_IDLE_TIMEOUT_MS,
                     AsyncTaskStreamConstants.PENDING_CLAIM_BATCH_SIZE,
-                    this::processMessage
+                    this::processMessage//消息处理回调
                 );
             } catch (Exception e) {
                 if (Thread.currentThread().isInterrupted()) {
@@ -97,7 +97,7 @@ public abstract class AbstractStreamConsumer<T> {
         T payload;
         try {
             payload = parsePayload(messageId, data);
-        } catch (Exception e) {
+        } catch (Exception e) {//解析失败
             Object fields = data == null ? null : data.keySet();
             log.warn("Failed to parse {} stream message, ack and discard: messageId={}, fields={}",
                 taskDisplayName(), messageId, fields, e);
@@ -110,12 +110,12 @@ public abstract class AbstractStreamConsumer<T> {
             return;
         }
 
-        int retryCount = parseRetryCount(data);
+        int retryCount = parseRetryCount(data);//消息重试几次
         log.info("Processing {} task: payload={}, messageId={}, retryCount={}",
             taskDisplayName(), payloadIdentifier(payload), messageId, retryCount);
 
         try {
-            if (shouldSkip(payload)) {
+            if (shouldSkip(payload)) {//直接跳过，比如任务实际上已经完成了
                 ackMessage(messageId);
                 log.info("{} task skipped: {}", taskDisplayName(), payloadIdentifier(payload));
                 return;
@@ -161,7 +161,7 @@ public abstract class AbstractStreamConsumer<T> {
         return error.length() > 500 ? error.substring(0, 500) : error;
     }
 
-    private void ackMessage(StreamMessageId messageId) {
+    private void ackMessage(StreamMessageId messageId) {//完成任务ACK
         try {
             redisService.streamAck(streamKey(), groupName(), messageId);
         } catch (Exception e) {
@@ -173,7 +173,7 @@ public abstract class AbstractStreamConsumer<T> {
         return redisService;
     }
 
-    protected abstract String taskDisplayName();
+    protected abstract String taskDisplayName();//任务的名称
 
     protected abstract String streamKey();
 
@@ -183,7 +183,7 @@ public abstract class AbstractStreamConsumer<T> {
 
     protected abstract String threadName();
 
-    protected abstract T parsePayload(StreamMessageId messageId, Map<String, String> data);
+    protected abstract T parsePayload(StreamMessageId messageId, Map<String, String> data);//把 Redis 的原始 Map 转换为业务对象
 
     protected abstract String payloadIdentifier(T payload);
 

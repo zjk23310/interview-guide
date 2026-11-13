@@ -29,7 +29,7 @@ public final class ApiPathResolver {
         .connect(Duration.ofMillis(connectTimeout))
         .read(Duration.ofMillis(readTimeout))
         .build();
-    ClientOptions options = ClientOptions.Companion.builder()
+    ClientOptions options = ClientOptions.Companion.builder()//转换为标准的客户配置
         .apiKey(apiKey)
         .credential(BearerTokenCredential.create(apiKey))
         .baseUrl(resolveVersionedBaseUrl(baseUrl))
@@ -39,6 +39,7 @@ public final class ApiPathResolver {
     return new OpenAIClientImpl(options);
   }
 
+  //解决版本问题
   public static String resolveVersionedBaseUrl(String baseUrl) {
     String stripped = stripTrailingSlashes(baseUrl);
     if (baseUrlContainsVersion(stripped)) {
@@ -47,6 +48,7 @@ public final class ApiPathResolver {
     return stripped + "/v1";
   }
 
+  //检查是否包含版本
   public static boolean baseUrlContainsVersion(String baseUrl) {
     if (baseUrl == null || baseUrl.isBlank()) {
       return false;
@@ -55,6 +57,7 @@ public final class ApiPathResolver {
     return TRAILING_VERSION.matcher(stripped).find();
   }
 
+  //移除尾部斜杠
   public static String stripTrailingSlashes(String value) {
     if (value == null) {
       return "";

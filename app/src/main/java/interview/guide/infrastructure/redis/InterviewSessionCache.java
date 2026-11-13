@@ -73,7 +73,8 @@ public class InterviewSessionCache {
             this.currentIndex = currentIndex;
             this.status = status;
             try {
-                this.questionsJson = objectMapper.writeValueAsString(questions);
+                this.questionsJson = objectMapper.writeValueAsString(questions);//这个OBjectMapper可以取了解下它是数据绑定的核心类
+                //注意question没有参与构造，而是通过objectMapper构造的
             } catch (JacksonException e) {
                 throw new BusinessException(ErrorCode.INTERNAL_ERROR, "序列化问题列表失败", e);
             }
@@ -223,14 +224,17 @@ public class InterviewSessionCache {
 
     // ==================== 私有方法 ====================
 
+    //构建会话key
     private String buildSessionKey(String sessionId) {
         return SESSION_KEY_PREFIX + sessionId;
     }
 
+    //构建key
     private String buildResumeSessionKey(Long resumeId) {
         return RESUME_SESSION_KEY_PREFIX + resumeId;
     }
 
+    //保存到redis
     private void saveResumeSessionMapping(Long resumeId, String sessionId) {
         String key = buildResumeSessionKey(resumeId);
         redisService.set(key, sessionId, SESSION_TTL);

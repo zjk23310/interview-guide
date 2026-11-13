@@ -38,13 +38,13 @@ public class ResumeDeleteService {
         
         // 1. 删除存储的文件（FileStorageService 已内置存在性检查）
         try {
-            storageService.deleteResume(resume.getStorageKey());
+            storageService.deleteResume(resume.getStorageKey());//删除RustFS中存储的
         } catch (Exception e) {
             log.warn("删除存储文件失败，继续删除数据库记录: {}", e.getMessage());
         }
         
         // 2. 删除面试会话（会自动删除面试答案）
-        interviewPersistenceService.deleteSessionsByResumeId(id);
+        interviewPersistenceService.deleteSessionsByResumeId(id);//还要删会话
         
         // 3. 删除数据库记录（包括分析记录）
         persistenceService.deleteResume(id);

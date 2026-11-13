@@ -49,7 +49,7 @@ public class DocumentParseService {
     public DocumentParseService(TextCleaningService textCleaningService,
                                 @Qualifier("documentParseExecutor")
                                 ThreadPoolExecutor parseExecutor,
-                                DocumentParseProperties properties) {
+                                DocumentParseProperties properties) {//构造
         this.textCleaningService = textCleaningService;
         this.parseExecutor = parseExecutor;
         this.properties = properties;
@@ -102,8 +102,8 @@ public class DocumentParseService {
         }
 
         try {
-            String content = parseWithTimeout(fileBytes);
-            String cleanedContent = textCleaningService.cleanText(content);
+            String content = parseWithTimeout(fileBytes);//解析
+            String cleanedContent = textCleaningService.cleanText(content);//清洗
             log.info("文件解析成功，提取文本长度: {} 字符", cleanedContent.length());
             return cleanedContent;
         } catch (BusinessException e) {
@@ -205,7 +205,7 @@ public class DocumentParseService {
      */
     public String downloadAndParseContent(FileStorageService storageService, String storageKey, String originalFilename) {
         try {
-            byte[] fileBytes = storageService.downloadFile(storageKey);
+            byte[] fileBytes = storageService.downloadFile(storageKey);//下载
             if (fileBytes == null || fileBytes.length == 0) {
                 throw new BusinessException(ErrorCode.INTERNAL_ERROR, "下载文件失败");
             }

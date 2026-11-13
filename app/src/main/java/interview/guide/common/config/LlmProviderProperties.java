@@ -27,7 +27,7 @@ public class LlmProviderProperties {
         private String model;
         private String embeddingModel;
         private Integer embeddingDimensions;
-        private Boolean supportsEmbedding;
+        private Boolean supportsEmbedding;//是否支持
         private Double temperature;
     }
 

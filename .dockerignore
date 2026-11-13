@@ -37,8 +37,8 @@ yarn.lock
 
 # Environment & Secrets
 .env
-.env.*
-!.env.example
+.env
+!.env
 
 # Logs & Temporary Files
 *.log

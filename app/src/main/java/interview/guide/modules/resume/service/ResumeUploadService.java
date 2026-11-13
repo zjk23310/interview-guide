@@ -30,7 +30,7 @@ public class ResumeUploadService {
 
     private final ResumeParseService parseService;
     private final FileStorageService storageService;
-    private final ResumePersistenceService persistenceService;
+    private final ResumePersistenceService persistenceService;//简历持久层
     private final AppConfigProperties appConfig;
     private final FileValidationService fileValidationService;
     private final AnalyzeStreamProducer analyzeStreamProducer;
@@ -49,7 +49,7 @@ public class ResumeUploadService {
         long startTime = System.currentTimeMillis();
 
         // 1. 验证文件
-        fileValidationService.validateFile(file, MAX_FILE_SIZE, "简历");
+        fileValidationService.validateFile(file, MAX_FILE_SIZE, "简历");//主要校验大小
 
         String fileName = file.getOriginalFilename();
         long fileSize = file.getSize();
@@ -58,19 +58,19 @@ public class ResumeUploadService {
 
         // 2. 验证文件类型
         String contentType = parseService.detectContentType(file);
-        validateContentType(contentType);
+        validateContentType(contentType);//文件校验
 
         // 3. 检查简历是否已存在（去重）
         Optional<ResumeEntity> existingResume = persistenceService.findExistingResume(file);
         if (existingResume.isPresent()) {
             log.info("简历上传处理完成（重复）: {} - 耗时: {}ms",
                 fileName, System.currentTimeMillis() - startTime);
-            return handleDuplicateResume(existingResume.get());
+            return handleDuplicateResume(existingResume.get());//处理重复
         }
 
         // 4. 解析简历文本
         long parseStart = System.currentTimeMillis();
-        String resumeText = parseService.parseResume(file);
+        String resumeText = parseService.parseResume(file);//解析文本
         if (resumeText == null || resumeText.trim().isEmpty()) {
             throw new BusinessException(ErrorCode.RESUME_PARSE_FAILED, "无法从文件中提取文本内容，请确保文件不是扫描版PDF");
         }
@@ -156,7 +156,7 @@ public class ResumeUploadService {
         // 已有分析结果，直接返回
         // 没有分析结果（可能之前分析失败），返回当前状态
         return analysisOpt.map(resumeAnalysisResponse -> Map.of(
-                "analysis", resumeAnalysisResponse,
+                "analysis", resumeAnalysisResponse,//这里已经有分析结果
                 "storage", Map.of(
                         "fileKey", resume.getStorageKey() != null ? resume.getStorageKey() : "",
                         "fileUrl", resume.getStorageUrl() != null ? resume.getStorageUrl() : "",
@@ -195,7 +195,7 @@ public class ResumeUploadService {
 
         log.info("开始重新分析简历: resumeId={}", resumeId);
 
-        transactionalExecutor.run(() -> {
+        transactionalExecutor.run(() -> {//里面执行的是个小事务
             ResumeEntity resume = resumeRepository.findById(resumeId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESUME_NOT_FOUND, "简历不存在"));
             resume.setAnalyzeStatus(AsyncTaskStatus.PENDING);
@@ -203,9 +203,10 @@ public class ResumeUploadService {
             resume.setAnalyzeAttemptId(null);
             resume.setAnalyzeUpdatedAt(java.time.LocalDateTime.now());
             resumeRepository.save(resume);
+            resumeRepository.resetAnalyzeRecoveryCount(resumeId);//这里不知道为什么它不放进去，我觉得应该放进去交给数据库事务管理
         });
         // 手动重试清零自动恢复计数
-        resumeRepository.resetAnalyzeRecoveryCount(resumeId);
+//        resumeRepository.resetAnalyzeRecoveryCount(resumeId);
 
         // 事务提交后再发送分析任务到 Stream；投递失败必须让调用方感知
         if (!analyzeStreamProducer.sendAnalyzeTask(resumeId)) {

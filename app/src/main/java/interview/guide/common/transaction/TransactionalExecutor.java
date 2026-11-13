@@ -12,7 +12,10 @@ import java.util.function.Supplier;
 @Service
 public class TransactionalExecutor {
 
-    @Transactional(rollbackFor = Exception.class)
+    //为了解决不要同类内部调用 @Transactional 方法的问题
+
+    //用于执行没有返回值的数据库操作
+    @Transactional(rollbackFor = Exception.class)//表示只要 Lambda 抛出 Exception，就回滚事务
     public void run(Runnable action) {
         action.run();
     }
@@ -22,6 +25,7 @@ public class TransactionalExecutor {
         return action.get();
     }
 
+    //强制创建事务
     @Transactional(rollbackFor = Exception.class, propagation = Propagation.REQUIRES_NEW)
     public void runRequiresNew(Runnable action) {
         action.run();

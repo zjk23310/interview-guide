@@ -13,7 +13,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class DocumentParseConfiguration {
 
   @Bean(name = "documentParseExecutor", destroyMethod = "shutdown")
-  public ThreadPoolExecutor documentParseExecutor(DocumentParseProperties properties) {
+  public ThreadPoolExecutor documentParseExecutor(DocumentParseProperties properties) {//处理线程池
     AtomicInteger sequence = new AtomicInteger();
     return new ThreadPoolExecutor(
         properties.getPoolSize(),

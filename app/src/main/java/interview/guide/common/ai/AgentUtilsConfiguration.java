@@ -26,11 +26,16 @@ public class AgentUtilsConfiguration {
         this.agentUtilsProperties = agentUtilsProperties;
     }
 
+
+    /**
+     * 读取skills，然后封装到SkillsTool
+     * @Explainer
+     */
     @Bean("interviewSkillsToolCallback")
     public ToolCallback interviewSkillsToolCallback() {
         String configuredSkillsRoot = agentUtilsProperties.getSkillsRoot();
         String normalizedSkillsRoot = normalizeSkillsRoot(configuredSkillsRoot);
-        Resource skillsRootResource = resourceLoader.getResource(normalizedSkillsRoot);
+        Resource skillsRootResource = resourceLoader.getResource(normalizedSkillsRoot);//这个Resource我也不是很了解，但是很多东西感觉都没必要完全理解，说不定以后看项目看着看着就懂了
 
         if (!skillsRootResource.exists()) {
             throw new IllegalStateException("未找到 skills 根目录，请检查配置: " + normalizedSkillsRoot);
@@ -43,6 +48,12 @@ public class AgentUtilsConfiguration {
             .build();
     }
 
+
+    /**
+     * 规范化skils路径
+     * @param raw
+     * Explainer ZJK
+     */
     private String normalizeSkillsRoot(String raw) {
         if (raw == null || raw.isBlank()) {
             return "classpath:skills";
@@ -55,7 +66,7 @@ public class AgentUtilsConfiguration {
             normalized = normalized.substring(0, normalized.length() - "/SKILL.md".length());
         }
 
-        int wildcardIndex = normalized.indexOf('*');
+        int wildcardIndex = normalized.indexOf('*');//通配符索引
         if (wildcardIndex >= 0) {
             normalized = normalized.substring(0, wildcardIndex);
         }
@@ -64,6 +75,6 @@ public class AgentUtilsConfiguration {
             normalized = normalized.substring(0, normalized.length() - 1);
         }
 
-        return normalized.isBlank() ? "classpath:skills" : normalized;
+        return normalized.isBlank() ? "classpath:skills" : normalized;//如果为空就返回默认
     }
 }

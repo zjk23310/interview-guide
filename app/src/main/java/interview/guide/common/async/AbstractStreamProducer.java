@@ -20,6 +20,7 @@ public abstract class AbstractStreamProducer<T> {
         this.redisService = redisService;
     }
 
+    //消息队列加任务
     protected boolean sendTask(T payload) {
         try {
             String messageId = redisService.streamAdd(
@@ -39,6 +40,7 @@ public abstract class AbstractStreamProducer<T> {
         }
     }
 
+    //截断错误
     protected String truncateError(String error) {
         if (error == null) {
             return null;

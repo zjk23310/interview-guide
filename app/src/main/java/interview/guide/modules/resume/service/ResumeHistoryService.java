@@ -32,10 +32,10 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class ResumeHistoryService {
 
-    private final ResumePersistenceService resumePersistenceService;
-    private final InterviewPersistenceService interviewPersistenceService;
-    private final PdfExportService pdfExportService;
-    private final ObjectMapper objectMapper;
+    private final ResumePersistenceService resumePersistenceService;//简历持久层
+    private final InterviewPersistenceService interviewPersistenceService;//会话持久
+    private final PdfExportService pdfExportService;//PDF导出
+    private final ObjectMapper objectMapper;//JSON
     private final ResumeMapper resumeMapper;
     private final InterviewMapper interviewMapper;
 
@@ -79,7 +79,7 @@ public class ResumeHistoryService {
      * 获取简历详情（包含分析历史）
      */
     public ResumeDetailDTO getResumeDetail(Long id) {
-        Optional<ResumeEntity> resumeOpt = resumePersistenceService.findById(id);
+        Optional<ResumeEntity> resumeOpt = resumePersistenceService.findById(id);//简历实体
         if (resumeOpt.isEmpty()) {
             throw new BusinessException(ErrorCode.RESUME_NOT_FOUND);
         }
@@ -87,7 +87,7 @@ public class ResumeHistoryService {
         ResumeEntity resume = resumeOpt.get();
 
         // 获取所有分析记录，使用 MapStruct 批量转换
-        List<ResumeAnalysisEntity> analyses = resumePersistenceService.findAnalysesByResumeId(id);
+        List<ResumeAnalysisEntity> analyses = resumePersistenceService.findAnalysesByResumeId(id);//根据resumeId获取analyses
         List<ResumeDetailDTO.AnalysisHistoryDTO> analysisHistory = resumeMapper.toAnalysisHistoryDTOList(
             analyses,
             this::extractStrengths,
@@ -155,7 +155,7 @@ public class ResumeHistoryService {
      * 导出简历分析报告为PDF
      */
     public ExportResult exportAnalysisPdf(Long resumeId) {
-        Optional<ResumeEntity> resumeOpt = resumePersistenceService.findById(resumeId);
+        Optional<ResumeEntity> resumeOpt = resumePersistenceService.findById(resumeId);//简历实体
         if (resumeOpt.isEmpty()) {
             throw new BusinessException(ErrorCode.RESUME_NOT_FOUND);
         }
@@ -167,7 +167,7 @@ public class ResumeHistoryService {
         }
 
         try {
-            byte[] pdfBytes = pdfExportService.exportResumeAnalysis(resume, analysisOpt.get());
+            byte[] pdfBytes = pdfExportService.exportResumeAnalysis(resume, analysisOpt.get());//PDF字节流
             String filename = "简历分析报告_" + resume.getOriginalFilename() + ".pdf";
 
             return new ExportResult(pdfBytes, filename);
